@@ -485,7 +485,7 @@ __kernel void Spectra(
       
       c       =   1.0f/(w0+wA+wB+wC) ;
       
-      if (id==100)  printf("%10.3e %10.3e %10.3e   %.2f %.2f %.2f %.2f   %10.3e %10.3e %10.3e %10.3e\n", a, b, c,   K, LA, LB, LC,   w0, wA, wB, wC) ;
+      // if (id==100)  printf("%10.3e %10.3e %10.3e   %.2f %.2f %.2f %.2f   %10.3e %10.3e %10.3e %10.3e\n", a, b, c,   K, LA, LB, LC,   w0, wA, wB, wC) ;
       
       doppler =   c*(w0*doppler         +  wA*dopA + wB*dopB  + wC*dopC) ;
       nu      =   c*(w0*NI[2*INDEX  ]   +  wA*A1   + wB*B1    + wC*C1  ) ;
@@ -914,7 +914,7 @@ __kernel void Columndensity(
                             __global   float  *TKIN,         //  7,10
                             __global float    *COLDEN,       //  8,11 -- NRA -- total column density
                             __global float    *MCOLDEN,      //  9,12 -- NRA -- column density of molecule
-                            __global float    *WTKIN,        // 10,13 -- NRA -- column density of molecule
+                            __global float    *WTKIN,        // 10,13 -- NRA -- Tkin
                             __global float    *WV,           // mass-weighted <LOS velocity>
 #if (WITH_HALF==1)
                             __global half     *CLOUD         //  0 [CELLS,4] ==  vx, vy, vz, sigma
@@ -1025,8 +1025,8 @@ __kernel void Columndensity(
 #endif
    } // while INDEX>=0
    
-   COLDEN[id]  = colden*GL ;     // total LOS column density (H2)
-   MCOLDEN[id] = mcolden*GL ;    // LOS column density of this species
+   COLDEN[id]  = colden*GL ;                                // total LOS column density (H2)
+   MCOLDEN[id] = mcolden*GL ;                               // LOS column density of this species
    WTKIN[id]   = (mcolden>0.0f) ? (STkin/mcolden) : 0.0f ;  // molecular mass weighted average kinetic temperature
    WV[id]      = (mcolden>0.0f) ? (SV   /mcolden) : 0.0f ;  // mass weighted average LOS velocity
 }
@@ -1037,25 +1037,204 @@ __kernel void Columndensity(
 
 
 
+__kernel void LOS_infall(
+                         const float        rholim,       //  density threshold [cm-3]
+                         const float2       D,            //  0  ray direction == theta, phi
+                         const float3       CENTRE,       //  1  map centre
+                         const float        DE,           //  2  single dec. offset
+                         const int          NRA,          //  3   number of RA points = work items
+                         const float        STEP,         //  4 step between spectra (grid units)
+#if (WITH_OCTREE>0)
+                         __global  int     *LCELLS,       //  5
+                         __constant int    *OFF,          //  6
+                         __global   int    *PAR,          //  7
+#endif
+                         __global   float  *RHO,          //  5, 8
+                         __global float    *INFALL,       //  sum((rho-rholim)*(V-Vrhomax)) / sum(rho-rholim)
+                         __global float    *DISTANCE,     //  distance [GL] of the LOS density maximum
+                         __global float    *RHOMAX,       //  LOS density maximum
+                         __global float4  *CLOUD          //  0 [CELLS]: vx, vy, vz, sigma
+                        )
+{
+   // Compute first location of the LOS peak density, then compute the "infall index"
+   //    weight = (n-nlim)
+   //    index for foreground collapse   -sum(V*w) / sum(w) 
+   //    index for background collapse   +sum(V*w) / sum(w) 
+   
+   // each work item calculates results for one pixel
+   //   ra  =  RA (grid units, from cloud centre)
+   //   de  =  DE(id)
+   int id = get_global_id(0) ;
+   if (id>=NRA) return ; // no more rays
+   int i ;
+   float RA ;              // grid units, offset of current ray
+   float colden  = 0.0f ;  // 2021-08-04, total column density on the LOS
+   float mcolden = 0.0f ;  // 2021-08-22, LOS column density of this species
+   float STkin   = 0.0f ;  // for calculation of density-weighted average Tkin -- total weight == mcolden
+   float SV      = 0.0f ;  //                                             LOS velocity
+   float tmp, depth, s, w, weight, doppler, v0, rhomax ;
+   RA  =   id  ;
+   REAL3   POS, dr, RPOS ;
+   float3  DIR ;
+   REAL    dx, dy, dz, distance, distance0 ;
+   DIR.x   =   sin(D.x)*cos(D.y) ;     // D.x = theta,   D.y = phi
+   DIR.y   =   sin(D.x)*sin(D.y) ;
+   DIR.z   =   cos(D.x)            ;
+   REAL3 RV, DV ; 
+   // Definition:  DE follows +Z, RA is now right
+   if (DIR.z>0.9999f) {
+      RV.x= 0.0001f ;  RV.y=+0.9999f ; RV.z=0.0001f ;    // RA = Y
+      DV.x=-0.9999f ;  DV.y= 0.0001f ; DV.z=0.0001f ;    // DE = -X
+   } else {
+      if (DIR.z<-0.9999f) {                              // view from -Z =>  (Y,X)
+         RV.x= 0.0001f ;  RV.y=+0.9999f ; RV.z=0.0001f ;
+         DV.x=+0.9999f ;  DV.y= 0.0001f ; DV.z=0.0001f ; 
+      } else {
+         // RA orthogonal to DIR and to +Z,   DIR=(1,0,0) => RV=(0,+1,0)
+         //                                   DIR=(0,1,0) => RV=(-1,0,0)
+         RV.x = -DIR.y ;   RV.y = +DIR.x ;  RV.z = ZERO ;  RV = normalize(RV) ;
+         // DV  =   RV x DIR
+         DV.x = -RV.y*DIR.z+RV.z*DIR.y ;
+         DV.y = -RV.z*DIR.x+RV.x*DIR.z ;
+         DV.z = -RV.x*DIR.y+RV.y*DIR.x ;
+      }
+   }   
+   // Offsets in RA and DE directions, (RA, DE) are just indices [0, NRA[, [0,NDE[
+   // CENTRE contains indices for the map centre using the current pixel size
+   POS.x  =  CENTRE.x + (RA-0.5*(NRA-1.0f))*STEP*RV.x + DE*STEP*DV.x ;
+   POS.y  =  CENTRE.y + (RA-0.5*(NRA-1.0f))*STEP*RV.y + DE*STEP*DV.y ;
+   POS.z  =  CENTRE.z + (RA-0.5*(NRA-1.0f))*STEP*RV.z + DE*STEP*DV.z ;
+   int ID =  ((fabs(POS.y-2.0)<0.05)&&(fabs(POS.z-1.5)<0.02)) ? id : -1 ;
+   // Change DIR to direction away from the observer
+   DIR *= -1.0f ;   // <----------------------------------------------------<<<
+   if (fabs(DIR.x)<1.0e-10f) DIR.x = 1.0e-10f ;
+   if (fabs(DIR.y)<1.0e-10f) DIR.y = 1.0e-10f ;
+   if (fabs(DIR.z)<1.0e-10f) DIR.z = 1.0e-10f ;   
+   // go to front surface, first far enough upstream (towards observer), then step forward to cloud (if ray hits)
+   POS.x -= 1000.0*DIR.x ;  POS.y -= 1000.0*DIR.y ;  POS.z -= 1000.0*DIR.z ;
+   if (DIR.x>ZERO)  dx = (ZERO-POS.x)/DIR.x ;     // DIR away from the observer
+   else             dx = (NX  -POS.x)/DIR.x ;
+   if (DIR.y>ZERO)  dy = (ZERO-POS.y)/DIR.y ;
+   else             dy = (NY  -POS.y)/DIR.y ;
+   if (DIR.z>ZERO)  dz = (ZERO-POS.z)/DIR.z ;
+   else             dz = (NZ  -POS.z)/DIR.z ;
+   dx      =  max(dx, max(dy, dz)) + 1.0e-4f ;  // max because we are outside
+   POS.x  +=  dx*DIR.x ;   POS.y  +=  dx*DIR.y ;   POS.z  +=  dx*DIR.z ;   // even for OT, still in root grid units
+   
+   int level0, INDEX ;
+#if (WITH_OCTREE>0)
+   int OTL, OTI ;
+#endif   
+   float tau, dtau  ;
+   float nmax ;
+   
+   REAL3 POS0 = POS ;  // save the initial position IN GLOBAL COORDINATES, we trace the path twice...
+   
+#if (WITH_OCTREE>0)
+   // for octree, POS is here still the GLOBAL position [GL]
+   IndexG(&POS, &OTL, &OTI, RHO, OFF) ;  // POS is here coverted to the LOCAL coordinates
+   INDEX =  (OTI>=0) ?  (OFF[OTL]+OTI) : (-1) ;
+#else
+   INDEX   =  Index(POS) ;
+#endif
+   
+   // first stepping through the model => find the location of the LOS density maximum
+   distance = 0.0 ;    rhomax = 0.0f ;
+   while (INDEX>=0) {   // starting from the observer side, step to the back of the model
+#if (WITH_OCTREE>0)   // INDEX  =  OFF[OTL] + OTI ;  --- update INDEX at the end of the step
+      // GetStepOT updates POS (IN LOCAL COORDINATES) and returns distance in global GL units !!!!
+      dx        =  GetStepOT(&POS, &DIR, &OTL, &OTI, RHO, OFF, PAR, 99, NULL, -1) ; // updates POS, OTL, OTI
+#else
+      if (DIR.x<0.0f)   dx = -     fmod(POS.x,ONE)  / DIR.x - EPS/DIR.x;
+      else              dx =  (ONE-fmod(POS.x,ONE)) / DIR.x + EPS/DIR.x;
+      if (DIR.y<0.0f)   dy = -     fmod(POS.y,ONE)  / DIR.y - EPS/DIR.y;
+      else              dy =  (ONE-fmod(POS.y,ONE)) / DIR.y + EPS/DIR.y;
+      if (DIR.z<0.0f)   dz = -     fmod(POS.z,ONE)  / DIR.z - EPS/DIR.z;
+      else              dz =  (ONE-fmod(POS.z,ONE)) / DIR.z + EPS/DIR.z;
+      dx         =  min(dx, min(dy, dz)) + EPS ;      // actual step
+#endif
+      distance  +=  dx ;
+      tmp        =  RHO[INDEX] ;
+      doppler    =  CLOUD[INDEX].x*DIR.x + CLOUD[INDEX].y*DIR.y + CLOUD[INDEX].z*DIR.z ; // redshift is positive
+      if (tmp>rhomax) {
+         rhomax    = tmp ;        // save maximum density
+         distance0 = distance  ;  // downstream side of the cell with the highest density
+         v0        = doppler ;    // save vlos at the density maximum
+      }
+#if (WITH_OCTREE>0)
+      INDEX =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1) ;
+#else
+      POS.x  += dx*DIR.x ;  POS.y  += dx*DIR.y ;  POS.z  += dx*DIR.z ;
+      INDEX = Index(POS) ;         
+#endif
+   } // while INDEX>=0
 
+   // if (id%111==0) printf("A %8.4f %8.4f %8.4f\n", POS.x, POS.y, POS.z) ;
+   
+   // if (distance>0.0f)  printf("OK1 ---- distance0   %.3e   density %.3e\n", distance0, s) ;
+   
+   // now we know that density maximum is at distance0 and has radial velocity v0
+   
+   
+   // loop the second time, computing the "infall index"
+   POS = POS0 ;   // return to original GLOBAL coordinates
+#if (WITH_OCTREE>0)
+   IndexG(&POS, &OTL, &OTI, RHO, OFF) ;
+   INDEX =  (OTI>=0) ?  (OFF[OTL]+OTI) : (-1) ;
+#else
+   INDEX   =  Index(POS) ;
+#endif
 
+   
+   s = 0.0f ;  weight = 0.0f ;  depth = 0.0f ;  distance = 0.0f ;
+   while (INDEX>=0) {   // starting from the observer side, step to the back of the model
+#if (WITH_OCTREE>0)     // INDEX  =  OFF[OTL] + OTI ;  --- update INDEX at the end of the step
+      dx        =  GetStepOT(&POS, &DIR, &OTL, &OTI, RHO, OFF, PAR, 99, NULL, -1) ; // updates POS, OTL, OTI
+#else
+      if (DIR.x<0.0f)   dx = -     fmod(POS.x,ONE)  / DIR.x - EPS/DIR.x;
+      else              dx =  (ONE-fmod(POS.x,ONE)) / DIR.x + EPS/DIR.x;
+      if (DIR.y<0.0f)   dy = -     fmod(POS.y,ONE)  / DIR.y - EPS/DIR.y;
+      else              dy =  (ONE-fmod(POS.y,ONE)) / DIR.y + EPS/DIR.y;
+      if (DIR.z<0.0f)   dz = -     fmod(POS.z,ONE)  / DIR.z - EPS/DIR.z;
+      else              dz =  (ONE-fmod(POS.z,ONE)) / DIR.z + EPS/DIR.z;
+      dx         =  min(dx, min(dy, dz)) + EPS ;      // actual step
+#endif
+      distance  +=  dx ;  // dx is in global [GL] coordinates
+      // we compute sum(v*(n-nlim))  and  sum(n-nlim)
+      w          =  max(0.0f, RHO[INDEX]-rholim) ;
+      weight    +=  w ;
+      doppler    =  CLOUD[INDEX].x*DIR.x + CLOUD[INDEX].y*DIR.y + CLOUD[INDEX].z*DIR.z ; // redshift is positive
+      doppler   -=  v0 ;          // vrad relative to that of the density peak
+      if (distance<(distance0-1.0e-6f)) {   // on the front side, doppler>0 is infall
+         s +=  doppler*w ;
+      } 
+      if (distance>(distance0+1.0e-6f)) {   // on the back side, doppler<0 is infall
+         s -=  doppler*w ;
+      }
+      if (fabs(distance-distance0)<1.0e-5) {
+         // calculate the distance along the LOS, wrt to the cloud centre:
+         // POS0 is the start position in global coordinates, and we know the distance travelled (distance=global).
+         // Calculate position vector for the centre of the cell that we just stepped over,
+         // convert that to a position vector wrt the cloud centre, and finally calculate the length
+         // of the projection onto the LOS direction (DIR).
+         depth =  (POS0.x+(distance-0.5*dx)*DIR.x-(0.5*NX-0.5))*DIR.x
+           + (POS0.y+(distance-0.5*dy)*DIR.y-(0.5*NY-0.5))*DIR.y
+           + (POS0.z+(distance-0.5*dz)*DIR.z-(0.5*NZ-0.5))*DIR.z  ;
+      }
+#if (WITH_OCTREE>0)
+      INDEX =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1) ;
+#else
+      POS.x  += dx*DIR.x ;  POS.y  += dx*DIR.y ;  POS.z  += dx*DIR.z ;
+      INDEX = Index(POS) ;         
+#endif
+   } // while INDEX>=0
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+   // if (depth!=0.0f)  printf("OK2 ---- depth %.3e\n", depth) ;
+   
+   INFALL[id]   =  (weight>0.0f) ?  (s/weight) : 0.0f  ;                // infall index [km/s]
+   DISTANCE[id] =  (weight>0.0f) ?  (depth*GL/3.0857e+18f) : 0.0f ;     // LOS distance to max rho [pc]
+   RHOMAX[id]   =  (weight>0.0f) ?  (rhomax) : 0.0f ;                   // LOS peak density
+} // LOS infall
 
 
 
@@ -1109,22 +1288,25 @@ __kernel void UpdateHF( // @h   non-octree version !!!!!!!!
    if  (id>=NRAY) return ;
    int  nx=(NX+1)/2, ny=(NY+1)/2, nz=(NZ+1)/2 ; // dimensions of the current ray grid
    
-   GAUSTORE float *pro ;             // pointer to GAU vector
+   GAUSTORE float *pro ;             // pointer to GAU vector...
    
 #  if (LOC_LOWMEM>0)  // kernel has only distinction LOC_LOWMEM<1 or not (host has 0, 1, >1 !!)
-   __global float *NTRUE   = &NTRUES[id*MAXCHN] ;
-#  else   // this leads to "insufficient resources" in case of GPU
-   __local float  NTRUESSS[LOCAL*MAXCHN] ;
-   __local float *NTRUE = &NTRUESSS[lid*MAXCHN] ;
+   // __global float *NTRUE   = &NTRUES[id*MAXCHN] ;
+   __global float *NTRUE   = &NTRUES[id*NCHN] ;  // we use only NCHN => NTRUES[NCHN]
+#  else               // this leads to "insufficient resources" in case of GPU
+   // __local float  NTRUESSS[LOCAL*MAXCHN] ;
+   // __local float *NTRUE = &NTRUESSS[lid*MAXCHN] ;
+   __local float  NTRUESSS[LOCAL*MAXCHN] ;       // must allocate MAXCHN !!
+   __local float *NTRUE = &NTRUESSS[lid*NCHN] ;  // we use only NCHN
 #  endif
    
    
    // It is ok up to ~150 channels to have these on GPU local memory --  LOCAL=32 and 150 channels =14kB ...
 #  if (LOC_LOWMEM>0)
-   __global float *profile = &PROFILE[id*MAXCHN] ;
+   __global float *profile = &PROFILE[id*MAXCHN] ;  // only NCHN channels actually used, allocate MAXCHN
 #  else
-   __local float  profile_array[LOCAL*MAXCHN] ;  // MAXCHN = max of NCHN
-   __local float *profile = &profile_array[lid*MAXCHN] ;
+   __local float  profile_array[LOCAL*MAXCHN] ;           // MAXCHN = max of NCHN
+   __local float *profile = &profile_array[lid*MAXCHN] ;  // local workspace
 #  endif
    
    
@@ -1184,25 +1366,34 @@ __kernel void UpdateHF( // @h   non-octree version !!!!!!!!
       row       =  clamp((int)round(log(CLOUD[INDEX].w/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;      
 #  endif
       
-      // Calculate profile as weighted sum of precalculated Gaussian profiles
+      // Calculate profile[NCHN] as weighted sum of precalculated Gaussian profiles
       for(int i=0; i<NCHN; i++) profile[i] = 0.0f ;
-      pro       =  &GAU[row*CHANNELS] ;
+      pro       =  &GAU[row*CHANNELS] ;  // GAU has CHANNELS
       for(int icomp=0; icomp<NCOMP; icomp++) {
          shift  =  round(doppler/WIDTH) + HF[icomp].x  ;  // shift in channels doppler !
          // skip profile function outside channels [LIM.x, LIM.y]
          // LIM.x in pro[] is mapped to channel c1 in profile[NCHN]
+         // c1:
+         //   centre channel in output spectrum   0.5*(NCHN-1)
+         //   this component centred at channel   0.5*(NCHN-1) + shift
+         //   start in channel  0.5*CHANNELS left of that
+         //   except if LIM>0, start in a later channel
          c1 = 0.5f*(NCHN-1.0f) + shift - 0.5f*(CHANNELS-1.0f) + LIM[row].x ; // could be negative
+         // c2: 
+         //   last channel = start plus width of relevant band = LIM.x-LIM.y
          c2 = c1+LIM[row].y-LIM[row].x ;  // update [c1,c2[ in profile
          //   c1 could be negative => require c1+ii >= 0
          //   c1+LIM.y-LIM.x could be >= NCHN ==> require   c1+ii < NCHN ==>  ii< NCHN-c1
+         // profile[NCHN], pro[CHANNELS], CHANNELS <= NCHN
          for(int ii=max(0,-c1); ii<min(LIM[row].y-LIM[row].x, NCHN-c1); ii++) {
             profile[c1+ii] +=  HF[icomp].y * pro[LIM[row].x+ii] ;
          }  // this assumes that sum(HFI[].y) == 1.0 !!
       }
-      
+            
       sum_delta_true = all_escaped = 0.0f ;
       
       for(int ii=0; ii<NCHN; ii++)  {
+         // profile is [NCHN]  (allocation MAXCHN)
          w               =  tmp_tau*profile[ii] ;
          factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
          // factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
@@ -1270,8 +1461,8 @@ __kernel void SpectraHF(  // @h
                           const float      STEP,         //  8 step between spectra (grid units)
                           const float      BG,           //  9 background intensity
                           const float      emis0,        // 10 h/(4pi)*freq*Aul*int2temp
-                          __global float  *NTRUE_ARRAY,  // 11 NRA*MAXNCHN
-                          __global float  *SUM_TAU_ARRAY,// 12 NRA*MAXNCHN
+                          __global float  *NTRUE_ARRAY,  // 11 NRA*MAXNCHN, we use [NRA, NCHN]
+                          __global float  *SUM_TAU_ARRAY,// 12 NRA*MAXNCHN, we use [NRA, NCHN]
 # if (WITH_OCTREE>0)
                           __global int    *LCELLS,       // 13
                           __constant int  *OFF,          // 14
@@ -1293,8 +1484,8 @@ __kernel void SpectraHF(  // @h
    if (id>=NRA) return ; // no more rays
    int lid = get_local_id(0) ;
    
-   __global float *NTRUE   = &(NTRUE_ARRAY[id*MAXCHN]) ;
-   __global float *SUM_TAU = &(SUM_TAU_ARRAY[id*MAXCHN]) ;
+   __global float *NTRUE   = &(NTRUE_ARRAY[id*NCHN]) ;    // we use only NTRUE_ARRAY[id, NCHN] < MAXCHN
+   __global float *SUM_TAU = &(SUM_TAU_ARRAY[id*NCHN]) ;
    int i ;
    float RA ; // grid units, offset of current ray
    // RA  =   -(id-0.5f*(NRA-1.0f))*STEP ;
@@ -1399,7 +1590,7 @@ __kernel void SpectraHF(  // @h
    __local float  profile_array[LOCAL*MAXCHN] ;
    __local float *profile = &profile_array[lid*MAXCHN] ;
 # else
-   __global float *profile = &(PROFILE[id*MAXCHN]) ;
+   __global float *profile = &(PROFILE[id*MAXCHN]) ;  // PROFILE[id, MAXCHN] --- work space
 # endif
    
    // printf("emis0 %12.4e, nu %12.4e, nbnb %12.4e, GL %12.4e\n", emis0, NI[INDEX].x, NI[INDEX].y, GL) ;
@@ -1461,10 +1652,9 @@ __kernel void SpectraHF(  // @h
          shift  =  round(doppler/WIDTH) + HF[icomp].x  ;  // shift in channels
          // skip profile function outside channels [LIM.x, LIM.y]
          // LIM.x in pro[] is mapped to channel c1 in profile[NCHN]
-         
+         // NCHN is the number of channels in this HFS spectrum
          c1 = 0.5f*(NCHN-1.0f) + shift - 0.5f*(CHANNELS-1.0f) + LIM[row].x ; // could be negative
          c2 = c1+LIM[row].y-LIM[row].x ;  // update [c1,c2[ in profile
-         
          //   c1 could be negative => require c1+ii >= 0
          //   c1+LIM.y-LIM.x could be >= NCHN
          //     ==> require   c1+ii < NCHN ==>  ii< NCHN-c1
@@ -1473,11 +1663,14 @@ __kernel void SpectraHF(  // @h
                            icomp, max(0,-c1), min(LIM[row].y-LIM[row].x, NCHN-c1), 0, NCHN,
                            HF[icomp].y) ;
 # endif
+         // pro 
          for(int ii=max(0,-c1); ii<min(LIM[row].y-LIM[row].x, NCHN-c1); ii++) {
             profile[c1+ii] +=  HF[icomp].y * pro[LIM[row].x+ii] ;
          }
          // this assumes that sum(HFI[].y) == 1.0
       }
+
+      
       
       // emissivity =  H_PIx4 * freq * nu * Aul *dx  * I2T ;
       emissivity =  emis0 * nu * dx * GL ;
@@ -1516,6 +1709,7 @@ __kernel void SpectraHF(  // @h
       NTRUE[i] -=  BG *  (  (fabs(dtau)>0.02f) ? (1.0f-exp(-dtau)) : (dtau*(1.0f-dtau*(0.5f-0.166666667f*dtau)))  ) ;
    }
 # endif
+
    
 }
 
@@ -2155,13 +2349,15 @@ __kernel void UpdateHF4(  // @h
       
       // Instead of   "profile   =  &GAU[row*CHANNELS]" ....
       // calculate profile as weighted sum of Gaussian profiles
-      for(int i=lid; i<NCHN; i+=ls) profile[i] = 0.0f ;
+      for(int i=lid; i<NCHN; i+=ls) profile[i] = 0.0f ;   // we use NCHN channels out of allocayed MAXCHN
       barrier(CLK_LOCAL_MEM_FENCE) ;      // *** as long as profile is __local
       pro       =  &GAU[row*CHANNELS] ;   // GAU has vectors for CHANNELS, not NCHN
       for(int icomp=0; icomp<NCOMP; icomp++) {
          shift  =  round(doppler/WIDTH) + HF[icomp].x ;
          // skip profile function outside channels [LIM.x, LIM.y]
          // LIM.x in pro[] is mapped to channel c1 in profile[NCHN]
+         // c1 = 0.5f*(NCHN-1.0f) + shift - 0.5f*(CHANNELS-1.0f) + LIM[row].x ; // could be negative
+         // ???? why CHANNELS 
          c1 = 0.5f*(NCHN-1.0f) + shift - 0.5f*(CHANNELS-1.0f) + LIM[row].x ; // could be negative
          c2 = c1+LIM[row].y-LIM[row].x ;  // update [c1,c2[ in profile
          //   c1 could be negative => require c1+ii >= 0

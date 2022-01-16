@@ -167,10 +167,16 @@ if (COOLING & HFS):
     print("*** Cooling not implemented for HFS => cooling will not be calculated!")
     COOLING =  0
 if (HFS):
-    BAND, MAXCHN, MAXCMP = ReadHFS(INI, MOL)     # CHANNELS becomes the maximum over all transitions
+    BAND, MAXCHN, MAXCMP = ReadHFS(INI, MOL)     # MAXCHN becomes the maximum over all transitions
     print("HFS revised =>  CHANNELS %d,  MAXCMP = %d" % (CHANNELS, MAXCMP))
     HF      =  zeros(MAXCMP, cl.cltypes.float2)
-    
+    if (0):
+        print("--------------------------------------------------------------------------------")
+        for i in range(len(BAND)):
+            b = BAND[i]
+            print("%2d components  BW %5.2f W %5.2f  VMIN %5.2f VMAX %5.2f chn %4d" % \
+            (b.N, b.BANDWIDTH, b.WIDTH, b.VMIN, b.VMAX, b.Channels()))
+        print("--------------------------------------------------------------------------------")
     
 print("TRANSITIONS %d, CELLS %d = %d x %d x %d" % (TRANSITIONS, CELLS, NX, NY, NZ))
 SIJ_ARRAY, ESC_ARRAY = None, None
@@ -205,6 +211,7 @@ if (WITH_CRT):
 GAUSTORE = '__global'
 GNO      =  100      # number of precalculated Gaussians
 G0, GX, GAU, LIM =  GaussianProfiles(INI['min_sigma'], INI['max_sigma'], GNO, CHANNELS, WIDTH)
+print("CHANNELS %d, GAU" % CHANNELS, GAU.shape)
 
 if (INI['sdevice']==''):
     # We use ini['GPU'], INI['platforms'], INI['idevice'] to select the platform and device
@@ -249,6 +256,7 @@ elif (OCTREE in [40,]):  # one work item per ray
     
 TAUSAVE = (OCTREE>0)&(INI['tausave']>0)
 
+# note -- CHANNELS is compile-time parameter, not changed by HFS
 OPT = " -D NX=%d -D NY=%d -D NZ=%d -D NRAY=%d -D CHANNELS=%d -D WIDTH=%.5ff -D ONESHOT=%d \
 -D VOLUME=%.5ef -D CELLS=%d -D LOCAL=%d -D GLOBAL=%d -D GNO=%d -D SIGMA0=%.5ff -D SIGMAX=%.4ff \
 -D GL=%.4ef -D MAXCHN=%d -D WITH_HALF=%d -D PLWEIGHT=%d -D LOC_LOWMEM=%d -D CLIP=%.3ef -D BRUTE_COOLING=%d \
@@ -471,7 +479,7 @@ if (PLWEIGHT):
     PL_buf =  cl.Buffer(context, mf.READ_WRITE, 4*CELLS)   # could be half??
 else:
     PL_buf =  cl.Buffer(context, mf.READ_WRITE, 4)         # dummy
-GAU_buf    =  cl.Buffer(context, mf.READ_ONLY  | mf.COPY_HOST_PTR, hostbuf=GAU)
+GAU_buf    =  cl.Buffer(context, mf.READ_ONLY  | mf.COPY_HOST_PTR, hostbuf=GAU)  # CHANNELS channels
 LIM_buf    =  cl.Buffer(context, mf.READ_ONLY  | mf.COPY_HOST_PTR, hostbuf=LIM)
 TPL_buf    =  cl.Buffer(context, mf.READ_WRITE,  4*NRAY)
 COUNT_buf  =  cl.Buffer(context, mf.READ_WRITE,  4*NRAY)
@@ -1824,7 +1832,7 @@ def WriteSpectra(INI, u, l):
             centre['x'], centre['y'], centre['z']  =   xc, yc, zc
         print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
 
-        if (ncmp>1): # note -- GAU is for CHANNELS channels = maximum over all bands!!
+        if (ncmp>1): # note -- GAU is for CHANNELS channels
             for i in range(ncmp):
                 HF[i]['x']  =  round(BAND[tran].VELOCITY[i]/WIDTH) # offset in channels (from centre of the spectrum)
                 HF[i]['y']  =  BAND[tran].WEIGHT[i]
@@ -1846,9 +1854,9 @@ def WriteSpectra(INI, u, l):
                 # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU CRT_TAU CRT_EMI
                 # 6         7         8           9           10          11    12      13      14     
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,   None,   None,
-                #  15     16   17    18  
-                #  LCELLS OFF  PAR   RHO 
-                None,    None,  None,  None,
+                #  15      16     17     18  
+                #  LCELLS  OFF    PAR    RHO 
+                None,      None,  None,  None,
                 # 19       20    
                 cl.int32,  cl.cltypes.float3])
             else:
@@ -1991,8 +1999,9 @@ def WriteSpectra(INI, u, l):
                         
             # save spectrum
             queue.finish()
-                        
-            cl.enqueue_copy(queue, NTRUE, NTRUE_buf)
+
+            # NTRUE[NRA, nchn]
+            cl.enqueue_copy(queue, NTRUE, NTRUE_buf)  # NTRUE is only nchn channels, kernel uses nchn channels
             WWW  = sum(NTRUE, axis=1)
             ira  = argmax(WWW)
             # if (WWW[ira]>300): print("de=%3d  max(W)=%7.2f for ra=%d" % (de, WWW[ira], ira))
@@ -2001,6 +2010,7 @@ def WriteSpectra(INI, u, l):
                 for ra in range(NRA):
                     asarray([(ra-0.5*(NRA-1.0))*ANGLE, (de-0.5*(NDE-1.0))*ANGLE], float32).tofile(fp) # offsets
                     NTRUE[ra,:].tofile(fp)       # spectrum
+                    # print("WRITE NTRUE %4d channels, MAX at channel %d" % (NTRUE.shape[1], argmax(NTRUE[ra,:])))
                 # save optical depth
                 cl.enqueue_copy(queue, NTRUE, STAU_buf)
                 for ra in range(NRA):
@@ -2314,7 +2324,7 @@ def WriteColumndensity(INI):
     for iview in range(len(INI['mapview'])):            
         print('*** MAPVIEW ', INI['mapview'][iview])
         theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
-        NRA, NDE    =  int(NRA), int(NDE)                               # 2021-07-14 - map dimensions
+        NRA, NDE    =  int(NRA), int(NDE)                             # 2021-07-14 - map dimensions
         DE          =  0.0    
         GLOBAL      =  IRound(NRA, LOCAL)    
         STEP        =  INI['grid'] / INI['angle']
@@ -2382,7 +2392,85 @@ def WriteColumndensity(INI):
         
 
     
+
         
+def WriteInfallIndex(INI):
+    """
+    Save maps of the distance (from the observer) to the LOS density maximum and 
+    of the infall index =  sum(max(0, rho-rholim)*(v-v0)) / sum(max(0, rho-rholim)).
+    Here rho is the volume density, rholim is some density threshold, v is the radial velocity, and
+    v0 is the radial velocity at the location of the LOS density maximum.
+    In the summation, the sign is changed behind the density maximum, so that the contributions
+    are always positive if the LOS motion is towards the density maximum.
+    Therefore, infall indices [km/s] are positive if te density-weighted motion is towards the
+    density maximum.
+    """
+    global program, queue, LOCAL, RHO_buf    
+    rholim = INI['infallindex']
+    nviews = len(INI['mapview'])
+    for iview in range(nviews):   # loop over map views
+        print('*** MAPVIEW ', INI['mapview'][iview])
+        theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
+        NRA, NDE    =  int(NRA), int(NDE)                             # 2021-07-14 - map dimensions
+        DE          =  0.0    
+        GLOBAL      =  IRound(NRA, LOCAL)    
+        STEP        =  INI['grid'] / INI['angle']
+        direction   =  cl.cltypes.make_float2()
+        direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
+        centre       =  cl.cltypes.make_float3()
+        centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
+        if (isfinite(xc*yc*zc)):                                      # 2021-07-14 - map centre given by user
+            centre['x'], centre['y'], centre['z']  =   xc, yc, zc
+        print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
+        INFALL_buf  = cl.Buffer(context, mf.WRITE_ONLY, 4*NDE) # infall index (per pixel) [km/s]
+        DIST_buf    = cl.Buffer(context, mf.WRITE_ONLY, 4*NDE) # LOS distance to maximum [pc]
+        RHOMAX_buf  = cl.Buffer(context, mf.WRITE_ONLY, 4*NDE) # LOS peak density  [cm-3]
+        kernel_infall = program.LOS_infall
+        if (OCTREE>0):
+            kernel_infall.set_scalar_arg_dtypes([
+            # rholim    D(irection)         CENTRE              DE           NRA        STEP
+            np.float32, cl.cltypes.float2,  cl.cltypes.float3,  np.float32,  np.int32,  np.float32,
+            # LCELLS   OFF     PAR            RHO     INFALL  DISTANCE  DIST   CLOUD 
+            None,      None,   None,          None,   None,   None,     None,  None    ])
+        else:
+            kernel_infall.set_scalar_arg_dtypes([
+            # rholim     DIRECTION           CENTRE              DE           NRA        STEP      
+            np.float32,  cl.cltypes.float2,  cl.cltypes.float3,  np.float32,  np.int32,  np.float32,
+            # RHO,   INFALL    DISTANCE   DIST    CLOUD
+            None,    None,     None,      None,   None     ])
+        fp_I    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE)
+        fp_D    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE)
+        fp_n    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE)
+        ANGLE   =  INI['angle']
+        tmp     =  zeros(NRA, float32)
+        for de in range(NDE):
+            DE      =  de-0.5*(NDE-1.0)            
+            if (OCTREE>0):
+                kernel_infall(queue, [GLOBAL,], [LOCAL,], rholim, direction, centre, DE, NRA, STEP, 
+                LCELLS_buf, OFF_buf, PAR_buf,    RHO_buf, INFALL_buf, DIST_buf, RHOMAX_buf, CLOUD_buf)
+            else:
+                kernel_infall(queue, [GLOBAL,], [LOCAL,], rholim, direction, centre, DE, NRA, STEP, 
+                RHO_buf, INFALL_buf, DIST_buf, RHOMAX_buf, CLOUD_buf)
+            # save spectrum
+            queue.finish()
+            cl.enqueue_copy(queue, tmp, INFALL_buf)
+            fp_I[0].data[de,:]   =  tmp
+            cl.enqueue_copy(queue, tmp, DIST_buf)
+            fp_D[0].data[de,:]  =  tmp
+            cl.enqueue_copy(queue, tmp, RHOMAX_buf)
+            fp_n[0].data[de,:]  =  tmp
+        ###
+        if (nviews>1): suffix = '%.2e.%03d.fits' % (rholim,  iview)
+        else:          suffix = '%.2e.fits'      % (rholim)        
+        fp_I.writeto( '%s_LOS_INFALL.%s' % (INI['prefix'], suffix), overwrite=True)   #  [km/s]
+        fp_D.writeto( '%s_LOS_DMAX.%s'   % (INI['prefix'], suffix), overwrite=True)   #  [pc]
+        fp_n.writeto( '%s_LOS_NMAX.%s'   % (INI['prefix'], suffix), overwrite=True)   #  [cm-3]
+    # for iview
+
+        
+
+    
+    
     
 #================================================================================
 #================================================================================
@@ -2501,6 +2589,9 @@ for i in range(len(ul)//2):
 
 if (INI['coldensave']>0):      # save  maps of N(H2), N(mol), Tkin, <V_LOS, mass_weighted)
     WriteColumndensity(INI)
+
+if (INI['infallindex']>0.0):   # save  maps of N(H2), N(mol), Tkin, <V_LOS, mass_weighted)
+    WriteInfallIndex(INI)
 
     
 print("================================================================================")
