@@ -295,6 +295,7 @@ def ReadIni(filename):
     'WITH_ALI'        : 1,                   #  whether to use ALI (can be 0 for octree>=2)
     'tausave'         : 0,                   #  save optical depths
     'coldensave'      : 0,                   #  save total and molecular column density, mass-weighted LOS Tkin
+    'infallindex'     : -1.0,                #  save map of infall index
     'plweight'        : 1,                   #  include path-length weighting for octree4 (affects OT4 only)
     'clip'            : 0.0,                 #  skip calculations when density below this threshold
     'damping'         : -1.0,                #  with ALI, dampen iterations is damping*old+(1-damping)*new
@@ -335,9 +336,6 @@ def ReadIni(filename):
             #                      theta   phi       NX      NY        xc     yc     zc    
             INI['mapview'].append([tmp[0], tmp[1],   tmp[2], tmp[3],   mc[0], mc[1], mc[2]])
 
-        if ((len(s)>1)&(s[0].find('device')==0)):
-            if (s[1].lower().find('g')>=0): GPU = 1
-            else:                           GPU = 0 
             
         if (len(s)>2): # two float arguments
             try:
@@ -381,14 +379,18 @@ def ReadIni(filename):
             if (s[0].find('cloud')==0):   INI.update({'cloud':    s[1]})
             if (s[0].find('molec')==0):   INI.update({'molecule': s[1]})
             if (s[0].find('load')==0):    INI.update({'load':     s[1]})
-            if (s[0].find('save ')==0):   INI.update({'save':     s[1]})  # make sure tausave and save and not confused
+            if (s[0].find('save')==0):    INI.update({'save':     s[1]})  # make sure tausave and save and not confused
             if (s[0].find('prefix')==0):  INI.update({'prefix':   s[1]})
             if (s[0].find('cabfile')==0): INI.update({'cabfile':  s[1]})
             if (s[0].find('hfsfile')==0): INI.update({'hfsfile':  s[1]})
             if (s[0].find('overlap')==0): INI.update({'overlap':  s[1]})            
             if (s[0].find('crttau')==0):  INI.update({'crttau':   s[1]})
             if (s[0].find('crtemit')==0): INI.update({'crtemit':  s[1]})
-            if (s[0].find('device')==0):  INI.update({'sdevice':  s[1]})
+            if (s[0].find('device')==0):
+                if   (s[1].lower()=='c'): INI.update({'GPU': 0})
+                elif (s[1].lower()=='g'): INI.update({'GPU': 1})
+                else:
+                    INI.update({'sdevice':  s[1]})
             ### 18-08-2021: now specifies a file name if the "cooling" keyword exists
             if (s[0].find('cooling')==0):
                 INI.update({'cooling':  1})
@@ -412,6 +414,7 @@ def ReadIni(filename):
                 if (s[0].find("clip")==0):         INI.update({'clip':        x})
                 if (s[0].find("damp")==0):         INI.update({'damping':     x})
                 if (s[0].find("dnlim")==0):        INI.update({'dnlimit':     x})
+                if (s[0].find("infallindex")==0):  INI.update({'infallindex': x})
             except:
                 pass
             # int argument
@@ -893,6 +896,7 @@ def InitCL_string(INI, verbose=True):
     if (len(device)<1):
         print("InitCL_string: could not find any device matching string: %s" % INI['sdevice'])
         sys.exit()
+    print(INI['sdevice'])
     # try to make subdevices with sub threads, return the first one
     try:
         context   =  cl.Context(device)

@@ -1125,6 +1125,7 @@ for ITER in range(NITER):
             sys.stdout.write('\n')
         print('*********************************************************************')
         # sys.exit()
+        
     if (((ITER%11==10)|(ITER==(NITER-1)))&(len(INI['save'])>0)): # save level populations
         fp = open(INI['save'], "wb")
         asarray([CELLS, LEVELS], int32).tofile(fp)
