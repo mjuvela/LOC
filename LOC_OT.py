@@ -254,7 +254,8 @@ elif (OCTREE in [40,]):  # one work item per ray
     GLOBAL =  IRound(NRAY, 32)  # for ONESHOT, this is ~NX*NY
     
     
-TAUSAVE = (OCTREE>0)&(INI['tausave']>0)
+# TAUSAVE = (OCTREE>0)&(INI['tausave']>0)
+TAUSAVE = (INI['tausave']>0)
 
 # note -- CHANNELS is compile-time parameter, not changed by HFS
 OPT = " -D NX=%d -D NY=%d -D NZ=%d -D NRAY=%d -D CHANNELS=%d -D WIDTH=%.5ff -D ONESHOT=%d \
