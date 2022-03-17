@@ -3,7 +3,7 @@
 #define UNROLL 1
 #define PRECALCULATED_GAUSS 1
 #define real float
-#define H_K  4.799243348e-11
+#define H_K  4.799243348e-11f
 
 
 inline void AADD(volatile __global float *addr, float val)
@@ -190,7 +190,7 @@ __kernel void Update(
 # if (DOUBLE_COOL>0)
       cool = 0.0 ;
       for(int ii=0; ii<CHANNELS; ii++) cool += NTRUE[ii] ;
-      if (id==10) printf("COOL[%2d] = %14.6e  - %14.6e  = %14.6e\n", INDEX, COOL[id*CELLS+INDEX], cool, COOL[id*CELLS+INDEX]-cool) ;      
+      // if (id==10) printf("COOL[%2d] = %14.6e  - %14.6e  = %14.6e\n", INDEX, COOL[id*CELLS+INDEX], cool, COOL[id*CELLS+INDEX]-cool) ;      
       COOL[id*CELLS+INDEX] += cool ;
 # else
       cool = 0.0f ;
@@ -216,7 +216,7 @@ __kernel void Update(
       
 #if (COOLING>0)
 # if (DOUBLE_COOL>0)
-      if (id==10) printf("COOL[%2d] = %14.6e  - %14.6e  = %14.6e\n", INDEX, COOL[INDEX], cool, COOL[INDEX]-cool) ;
+      // if (id==10) printf("COOL[%2d] = %14.6e  - %14.6e  = %14.6e\n", INDEX, COOL[INDEX], cool, COOL[INDEX]-cool) ;
       COOL[id*CELLS+INDEX] -= cool ;      
 # else
       AADD(&(COOL[INDEX]), -cool) ; // heating of the next cell
@@ -533,8 +533,8 @@ void __kernel SolveCL(const int         BATCH,         //  0 number of cells per
          for(int p=0; p<PARTNERS; p++) { // get_C has the correct row from C, NTKIN element vector DOWNWARDS !!
             tmp += CABU[p]*get_C(TKIN[id], NTKIN, &MOL_TKIN[p*NTKIN], &C[p*NCUL*NTKIN + u*NTKIN]) ;
          }
-         MATRIX[IDX(j,i)]  =  tmp*RHO[id] ;    //  IDX(j,i) = transition j <-- i  == downwards
-         MATRIX[IDX(i,j)]  =  tmp * RHO[id] * (G[i]/G[j])* exp(-H_K*(E[i]-E[j])/TKIN[id]) ; // upwards
+         MATRIX[IDX(j,i)]  =  (float)tmp * RHO[id] ;    //  IDX(j,i) = transition j <-- i  == downwards
+         MATRIX[IDX(i,j)]  =  (float)tmp * RHO[id] * (G[i]/G[j])* exp(-H_K*(E[i]-E[j])/TKIN[id]) ; // upwards
       }
    }
    

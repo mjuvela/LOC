@@ -316,6 +316,7 @@ def ReadIni(filename):
     'FITS_RA'         :  0.0,                #  centre coordinates (deg) of FITS maps
     'FITS_DE'         :  0.0,                #
     'verbose'         :  1,
+    'doublecool'      :  0, 
     'keys'            : []                   # store all keywords
     }
     lines = open(filename, 'r').readlines()
@@ -420,6 +421,7 @@ def ReadIni(filename):
             # int argument
             try:
                 x = int(s[1])
+                if (s[0].find("doublecool")==0):   INI.update({'doublecool':  x})
                 if (s[0].find("channels")==0):     INI.update({'channels':    x})
                 if (s[0].find("iterations")==0):   INI.update({'iterations':  x})
                 if (s[0].find("uppermost")==0):    INI.update({'uppermost':   x})
@@ -1128,6 +1130,8 @@ def GetSteps1D(CELLS, RADIUS, NRAY, IP, DIRWEI):
                     if (len(DIRWEI)>0):   APL[icell]  +=  2.0*tmp*DIRWEI[iray] 
     if (STEP[0, 0]<1e-10):
         print(" *** INNERMOST CELL IS NOT HIT BY ANY RAYS -> increase nray and/or adjust alpha (SPTEP[0,0]=%.5e)!!!" % STEP[0,0])
+        print("IP = ")
+        print(IP)
         sys.exit(0)
     if (len(DIRWEI)<1): return STEP   # this one when called before writing the spectra
     return STEP, APL  # this one before simulations (DIRWEI used, APL updated)

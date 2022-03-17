@@ -31,7 +31,7 @@ COOLFILE    =  INI['coolfile']
 if (COOLING & HFS):
     print("*** Cooling not implemented for HFS => cooling will not be calculated!")
     COOLING =  0
-DOUBLE_COOL =  0
+DOUBLE_COOL =  INI['doublecool']                  # single precision *should* be enough...
 
 if (INI['angle']>0.0):  # cloud size defined by ini file
     GL         =  INI['angle']*ARCSEC_TO_RADIAN * INI['distance'] *PARSEC   # [cm] = 1D cloud radius
@@ -121,9 +121,35 @@ for i in range(NRAY):
 #   IP      =   u^(1/(k+1))
 #   weight  =   2/(k+1)  * r^(1-k)
 for i in range(NRAY):
+    # default alpha = 1.0  
+    #  ==>  IP =  sqrt(u),   DIRWEI = 1.0
     IP[i]      =  ((i+0.5)/NRAY)**(1.0/(1.0+INI['alpha']))
     DIRWEI[i]  =  (2.0/(1.0+INI['alpha'])) * (IP[i])**(1.0-INI['alpha'])
-
+if ((INI['alpha']<-10.0)&(NRAY % CELLS==0)):
+    # This does not work any better than the "normal" alpha weighting above...
+    # set equal number of rays for each shell
+    # * original number of rays per shell   =  NRAY* pi*(rout^2-rin^2)) / (pi*1.0**2)
+    #   new number of rays / shell          =  NRAY / CELLS
+    #   weight                              =  (rout^2-rin^2)*CELLS
+    # * position still generated  r ~ sqrt(u), just inside each shell
+    rpc = NRAY // CELLS  # this many rays for each shell
+    for i in range(NRAY):
+        i0 = i // rpc  # shell
+        j0 = i %  rpc  # j0:th ray in this shell
+        print("i0 = %3d / %3d,   j0 = %2d / %2d" % (i0, CELLS, j0, rpc))
+        if (i0==0): # innermost shell [0, RADIUS[0]]
+            IP[i]      =  RADIUS[0] * sqrt((0.5+j0)/rpc)            #  r ~ sqrt(u)
+            DIRWEI[i]  =  RADIUS[0]**2 * CELLS                      # weighting
+        else:       # other shells [ RADIUS[i0-1], RADIUS[i0] ]
+            IP[i]      =  RADIUS[i0-1]+(RADIUS[i0]-RADIUS[i0-1])*sqrt((0.5+j0)/rpc) #  r ~ sqrt(u)
+            DIRWEI[i]  =  (RADIUS[i0]**2.0-RADIUS[i0-1]**2.0)*CELLS                 # weighting
+    if (0):
+        print('--------------------------------------------------------------------------------')
+        print("RAYS PER SHELL....")
+        print("IP     = ", IP)
+        print("DIRWEI = ", DIRWEI)
+        print('--------------------------------------------------------------------------------')
+    
 # Precalculate the distance each ray travels in each of the shells = STEP[NRAY,CELLS]
 # calculate the average length within each cell (for emission weighting)  = APL
 # APL[icell] used to divide emitted ~ STEP/APL
