@@ -73,8 +73,13 @@ __kernel void Update(
 #if (WITH_CRT>0)
                      ,
                      const int       TRAN,     //  index of the current transition
+# if 0
                      constant float *CRT_TAU,  //  dust optical depth / GL
                      constant float *CRT_EMI   //  dust emission photons/c/channel/H
+# else
+                     __global float *CRT_TAU,  //  dust optical depth / GL
+                     __global float *CRT_EMI   //  dust emission photons/c/channel/H
+# endif
 #endif                     
                     )  {
    // Follow one ray, update SIJ and ESC counters
@@ -125,10 +130,10 @@ __kernel void Update(
       shift     =  round(doppler/WIDTH) ;
       profile   =  &GAU[INDEX*CHANNELS] ;
       sum_delta_true = all_escaped = 0.0f ;
-#if (WITH_CRT>0)      
+#if (WITH_CRT>0) // -----------------------------------------------------------------------------------------------------
       sij = 0.0f ;
       // Dust optical depth and emission
-      Ctau      =  dx     * CRT_TAU[INDEX*TRANSITIONS+TRAN] ;
+      Ctau      =  dx     * CRT_TAU[INDEX*TRANSITIONS+TRAN] + 1.0e-30f ;
       Cemit     =  weight * CRT_EMI[INDEX*TRANSITIONS+TRAN] ;
       // looping over spectral line is enough, but need all channels when writing spectra
       // for(int ii=max(0, shift); ii<min(CHANNELS, CHANNELS+shift); ii++)
@@ -161,7 +166,7 @@ __kernel void Update(
       ARES[id*CELLS+INDEX].x  += sij ;            // to be divided by VOLUME
       // Emission ~ path length dx but also weighted according to direction, works because <WEI>==1.0
       ARES[id*CELLS+INDEX].y  += all_escaped ;    // to be divided by VOLUME
-#else
+#else // ----------------------------------------------------------------------------------------------------------------
       tmp_emit  =  weight * nu*Aul / tmp_tau ;
       for(int ii=max(0, shift); ii<min(CHANNELS, CHANNELS+shift); ii++)  {
 # if 0
@@ -245,8 +250,14 @@ __kernel void Spectra(
                       __global float4 *COLDEN,        // 11 [NRAY_SPE] = N, N_mol, tau, dummy
 #if (WITH_CRT>0)
                       const int       TRAN,           //  index of the current transition
+# if (0)
                       constant float *CRT_TAU,        //  dust optical depth / GL
                       constant float *CRT_EMI,        //  dust emission photons/c/channel/H
+# else
+                      // many transitions => arrays too large for constant memory ???
+                      __global float *CRT_TAU,        //  dust optical depth / GL
+                      __global float *CRT_EMI,        //  dust emission photons/c/channel/H
+# endif
 #endif
                       const int savetau
                      )

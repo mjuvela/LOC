@@ -67,6 +67,17 @@ if (WITH_CRT):
     for t in range(TRANSITIONS):  
         CRT_EMI[:,t] *=  RHO[:]          # CRT_EMI[CELLS, TRANSITIONS]
 
+    if (0):
+        print("*** TESTING !!!!   CRT_TAU and CRT_EMI == 0.0  ****")        
+        clf()
+        imshow(log10(CRT_TAU), aspect='auto')
+        title("CRT_TAU  %.3e ... %.3e" % (min(ravel(CRT_TAU)), max(ravel(CRT_TAU))))
+        colorbar()
+        show(block=True)
+        sys.exit()
+        CRT_TAU[:,:] = 1.0e-20
+        CRT_EMI[:,:] = 0.0
+        
 if (0):
     for t in range(TRANSITIONS):
         u, l  =  MOL.T2L(t)
@@ -452,8 +463,9 @@ NTRUE_SPE_buf  = cl.Buffer(context, mf.READ_WRITE, 4*NRAY_SPE*CHANNELS)      # [
 LIM_buf    = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=LIM) 
     
 if (WITH_CRT):    
-    CRT_TAU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=CRT_TAU)
+    CRT_TAU_buf = cl.Buffer(context, mf.READ_ONLY, 4*CELLS*TRANSITIONS)
     CRT_EMI_buf = cl.Buffer(context, mf.READ_ONLY, 4*CELLS*TRANSITIONS)
+    cl.enqueue_copy(queue, CRT_TAU_buf, CRT_TAU)
     cl.enqueue_copy(queue, CRT_EMI_buf, CRT_EMI)
             
 cl.enqueue_copy(queue, STEP_buf,   STEP)  # will change when we write spectra !!
@@ -463,7 +475,7 @@ if (COOLING):
     if (DOUBLE_COOL):
         COOL_buf  = cl.Buffer(context, mf.READ_WRITE, 8*CELLS*GLOBAL)
     else:
-        COOL_buf  = cl.Buffer(context, mf.READ_WRITE, 4*CELLS*GLOBAL) # *GLOBAL OS 18-08-2021
+        COOL_buf  = cl.Buffer(context, mf.READ_WRITE, 4*CELLS)
 
 WRK  = zeros(CELLS, cl.cltypes.float2)
 
@@ -589,11 +601,14 @@ def Simulate(INI, MOL):
     t00    =  time.time()
     tmp_1  =  C_LIGHT*C_LIGHT/(8.0*pi)
     Tbg    =  INI['Tbg']
-    SUM_COOL, LEVL_COOL, HF = [], [], []
+    SUM_COOL, LEV_COOL, HF = [], [], []
     if (COOLING):
         SUM_COOL = zeros(CELLS,        float32)
         HF       = zeros(TRANSITIONS,  float32)
-        LEV_COOL = zeros(CELLS*GLOBAL, [float32,float64][DOUBLE_COOL>0])
+        if (DOUBLE_COOL>0):
+            LEV_COOL = zeros(CELLS*GLOBAL, float64)
+        else:
+            LEV_COOL = zeros(CELLS, float32)
         for t in range(TRANSITIONS):
             # photon counts = true photons in/through cell, divided by Vcloud
             # true_in_cell/Vcloud *= Vcloud/Vcell    ==     /= VOLUME
@@ -601,7 +616,7 @@ def Simulate(INI, MOL):
     for tran in range(TRANSITIONS):
         if (COOLING>0):
             LEV_COOL[:] = 0.0
-            cl.enqueue_copy(queue, COOL_buf, LEV_COOL)  # float32 or float64, depending on DOUBLE_COOL
+            cl.enqueue_copy(queue, COOL_buf, LEV_COOL)  # float32*CELLS or float64*CELLS*GLOBAL
         upper, lower  =  MOL.T2L(tran)
         A_b           =  MOL.BB[tran]
         A_Aul         =  MOL.A[tran]
@@ -653,10 +668,14 @@ def Simulate(INI, MOL):
             if (COOLING):
                 kernel_sim(queue, [GLOBAL,], [LOCAL,], CLOUD_buf, GAU_buf, LIM_buf, A_Aul, A_b, A_gauss_norm,
                 WEI_buf, VOL_buf, STEP_buf, APL_buf, BG, IP_buf, NI_buf, NTRUE_buf, ARES_buf, COOL_buf)
-                cl.enqueue_copy(queue, LEV_COOL, COOL_buf)   # float32 or float64  [CELLS*GLOBAL]
-                LEV_COOL.shape = (GLOBAL, CELLS)
-                for icell in range(CELLS):
-                    SUM_COOL[icell] += sum(LEV_COOL[:, icell]) * HF[tran] / VOLUME[icell]    # per cm3 !!
+                cl.enqueue_copy(queue, LEV_COOL, COOL_buf)   # float32[CELLS] or float64[CELLS*GLOBAL]
+                if (DOUBLE_COOL>0):
+                    LEV_COOL.shape = (GLOBAL, CELLS)
+                    for icell in range(CELLS):
+                        SUM_COOL[icell] += sum(LEV_COOL[:, icell]) * HF[tran] / VOLUME[icell]    # per cm3 !!
+                else:
+                    for icell in range(CELLS):
+                        SUM_COOL[icell] +=  LEV_COOL[icell] * HF[tran] / VOLUME[icell]    # per cm3 !!
             else:
                 if (WITH_CRT):
                     kernel_sim(queue, [GLOBAL,], [LOCAL,], CLOUD_buf, GAU_buf, LIM_buf, A_Aul, A_b, A_gauss_norm, 
@@ -673,7 +692,11 @@ def Simulate(INI, MOL):
         ESC_ARRAY[:, tran]  =  WRK[:]['y']
     #  for tran
     queue.finish()
-    sys.stdout.write("   [%.4f s]\n" % (time.time()-t00))    
+    sys.stdout.write("   [%.4f s]\n" % (time.time()-t00))
+    if (0):
+        SIJ_ARRAY.tofile('SIJ.dump')
+        ESC_ARRAY.tofile('ESC.dump')
+        sys.exit()
     if (COOLING):
         print("BRUTE_COOL: %10.3e" % mean(asarray(SUM_COOL, float64)))
         fpb = open(COOLFILE, "wb") 
@@ -681,12 +704,16 @@ def Simulate(INI, MOL):
         fpb.close()
     m  = nonzero(~isfinite(SIJ_ARRAY))
     if (len(m[0])>0):  
-        print("       *** SIJ_ARRAY: NUMBER OF BAD VALUES = %d" % len(m[0]))
+        print("       *** SIJ_ARRAY: NUMBER OF NOT FINITE VALUES = %d" % len(m[0]))
+        print(m)
+        SIJ_ARRAY[m] = 1.0e-30
     m  = nonzero(SIJ_ARRAY<-1.0e-15)
     if (len(m[0])>0):   
-        print("       *** SIJ_ARRAY: NUMBER OF VALUES below 1e-15 = %d" % len(m[0]))
-        for i in range(len(m[0])):
-            print("  CELL %3d   TRAN %3d" % (m[0][i], m[1][i]))
+        print("       *** SIJ_ARRAY: NUMBER OF VALUES below -1e-15 = %d" % len(m[0]))
+        if (0):
+            for i in range(len(m[0])):
+                print("  CELL %3d   TRAN %3d    SIJ = %12.4e" % (m[0][i], m[1][i], SIJ_ARRAY[m[0][i], m[1][i]]))
+        SIJ_ARRAY[m] = 1.0e-30
     if (0):
         for i in range(CELLS):
             print("CELL %4d  SIJ = " % i, SIJ_ARRAY[i,:])
@@ -703,7 +730,7 @@ def SimulateOL(INI, MOL):
     # print("SimulateOL")
     tmp_1  =  C_LIGHT*C_LIGHT/(8.0*pi)
     Tbg    =  INI['Tbg']
-    SUM_COOL, LEVL_COOL, HF = [], [], []
+    SUM_COOL, LEV_COOL, HF = [], [], []
     # Upload NU and NBNB arrays
     for itran in range(TRANSITIONS):
         u, l   =  MOL.T2L(itran)        
@@ -827,10 +854,10 @@ def WriteSpectra(tran, prefix, savetau=0):
             kernel_spe(queue, [GLOBAL_SPE,], [LOCAL,], CLOUD_buf, GAU_buf, A_gauss_norm, NI_buf, BG, 
             emissivity, IP_buf, STEP_buf, NTRUE_SPE_buf, STAU_buf, np.int32(tran), np.int32(channels), savetau)
     else:  # including OVERLAP ... spectra for individual transitions
-        if (WITH_CRT):
+        if (WITH_CRT):  #  INVALID_KERNEL_ARGS ???
             kernel_spe(queue, [GLOBAL_SPE,], [LOCAL,], CLOUD_buf, GAU_buf, A_gauss_norm, NI_buf, BG, 
             emissivity, IP_buf, STEP_buf, NTRUE_SPE_buf, STAU_buf, RHO_buf, COLDEN_buf,
-            tran, CRT_TAU_buf, CRT_EMI_buf, savetau)
+            np.int32(tran), CRT_TAU_buf, CRT_EMI_buf,          savetau)
         else:
             kernel_spe(queue, [GLOBAL_SPE,], [LOCAL,], CLOUD_buf, GAU_buf, A_gauss_norm, NI_buf, BG, 
             emissivity, IP_buf, STEP_buf, NTRUE_SPE_buf, STAU_buf, RHO_buf, COLDEN_buf, savetau)

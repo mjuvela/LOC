@@ -2047,13 +2047,24 @@ def WriteSpectra(INI, u, l):
 
 def WriteLOSSpectrum(INI, u, l):
     """
-    Write file for a single line of sight, the contribution of different LOS steps to the final spectrum 
+    Write file for a single line of sight, the contribution of different LOS steps to the final spectrum.
+    Input:
+        INI['losspectrum'] = 1   =>  escaped (observed radiation)
+                           = 2   =>  emitted, without any foreground absorption
     LOS_EMIT[steps, channels] =  contribution [K] of each spectrum to the final spectrum
     LENGTH[steps]             =  length of each step, starting from the observer side
     LOS_RHO[steps], LOS_T[steps], LOS_X[steps] = density, Tkin, and abundance for each step
     """
     global MOL, program, queue, WIDTH, LOCAL, NI_ARRAY, WRK, NI_buf, HFS, CHANNELS, HFS, TAUSAVE
     global NTRUE_buf, STAU_buf, NI_buf, CLOUD_buf, GAU_buf, PROFILE_buf
+    TAGABS      =  INI['losspectrum']    #  1 = observed, 2 = no foreground absorptions
+    if (not(TAGABS in[1,2])):
+        print("********************************************************************************")
+        print("WriteLOSSpectrum: check keyword losspectrum!")
+        print("Possible values are: 1 (normal, observed) and 2 (no foreground absorption)")
+        print("********************************************************************************")
+        time.sleep(3)
+        return ;
     tmp_1       =  C_LIGHT*C_LIGHT/(8.0*pi)
     tran        =  MOL.L2T(u, l)
     if (tran<0):
@@ -2126,9 +2137,9 @@ def WriteLOSSpectrum(INI, u, l):
                 #  15     16   17      18     
                 #  LCELLS OFF  PAR     RHO    
                 None,    None,  None,  None,   
-                # 19       20                     21     22     23        24          25        26         27      
-                # FOLLOW   CENTRE                 TKIN   ABU    LOS_EMIT  LOS_LENGTH  LOS_RHO   LOS_TKIN   LOS_ABU
-                cl.int32,  cl.cltypes.float3,     None,  None,  None,     None,       None,     None,      None ])
+                # 19       20                     21     22     23        24          25        26         27        28   
+                # FOLLOW   CENTRE                 TKIN   ABU    LOS_EMIT  LOS_LENGTH  LOS_RHO   LOS_TKIN   LOS_ABU   TAGABS 
+                cl.int32,  cl.cltypes.float3,     None,  None,  None,     None,       None,     None,      None,     np.int32 ])
             else:
                 if (1):
                     print("Spectra_vs_LOS() not implemented for plain Cartesian grid -- consider using octree format")
@@ -2141,9 +2152,9 @@ def WriteLOSSpectrum(INI, u, l):
                     # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU CRT_TAU CRT_EMI
                     # 6         7         8           9           10          11    12      13      14     
                     np.float32, np.int32, np.float32, np.float32, np.float32, None, None,   None,   None,
-                    # 15      16                     17     18     19        20      21       22        23
-                    #  FOLLOW   CENTRE               TKIN   ABU    LOS_EMIT  LENGTH  LOS_RHO, LOS_TKIN, LOS_ABU
-                    cl.int32, cl.cltypes.float3,     None,  None,  None,     None,   None,    None,     None   ])
+                    # 15      16                     17     18     19        20      21       22        23       24
+                    #  FOLLOW   CENTRE               TKIN   ABU    LOS_EMIT  LENGTH  LOS_RHO, LOS_TKIN, LOS_ABU  TAGABS
+                    cl.int32, cl.cltypes.float3,     None,  None,  None,     None,   None,    None,     None,    np.int32   ])
         else:
             if (OCTREE>0):
                 kernel_spe  = program.Spectra_vs_LOS
@@ -2156,9 +2167,9 @@ def WriteLOSSpectrum(INI, u, l):
                 # LCELLS, OFF,  PAR,  RHO,    FOLLOW    CENTRE             
                 # 13      14    15    16      17        18                 
                 None,     None, None, None,   np.int32, cl.cltypes.float3,  
-                #   TKIN    ABU    LOS_EMIT  LENGTH  LOS_RHO  LOS_TKIN    LOS_ABU
-                #   19      20     21        22      23       24          15    
-                None,       None,  None,     None,   None,    None,       None   ])
+                #   TKIN    ABU    LOS_EMIT  LENGTH  LOS_RHO  LOS_TKIN    LOS_ABU   TAGABS
+                #   19      20     21        22      23       24          15        16
+                None,       None,  None,     None,   None,    None,       None,     np.int32   ])
             else:
                 kernel_spe  = program.Spectra_vs_LOS
                 #                                 0     1     2     3           4                  5
@@ -2167,9 +2178,9 @@ def WriteLOSSpectrum(INI, u, l):
                 # 6         7         8           9           10          11    12       14        15
                 # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU  FOLLOW    CENTRE
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,    np.int32, cl.cltypes.float3,
-                #  16     17     19        20      21       22         13      
-                #  TKIN   ABU    LOS_EMIT  LENGTH  LOS_RHO  LOS_TKIN   LOS_ABU 
-                None,     None,  None,     None,   None,    None,      None    ])
+                #  16     17     19        20      21       22         13       14
+                #  TKIN   ABU    LOS_EMIT  LENGTH  LOS_RHO  LOS_TKIN   LOS_ABU  TAGABS
+                None,     None,  None,     None,   None,    None,      None,    np.int32    ])
             
         if (ncmp>1):
             print("WriteLOSSpectrum -- no kernel yet for hfs spectra -- skip calculation!!!")
@@ -2183,9 +2194,9 @@ def WriteLOSSpectrum(INI, u, l):
                 #  6        7         8           9           10          11      12     
                 #  DE       NRA       STEP        BG          emis        NTRUE   SUM_TAU
                 np.float32, np.int32, np.float32, np.float32, np.float32, None,   None,
-                # 13      14        15     16       17                 
-                # NCHN    NCOMP     HF     PROFILE  MAP_CENTRE
-                np.int32, np.int32, None,  None,    cl.cltypes.float3 ])
+                # 13      14        15     16       17                  18
+                # NCHN    NCOMP     HF     PROFILE  MAP_CENTRE          TAGABS
+                np.int32, np.int32, None,  None,    cl.cltypes.float3,  np.int32 ])
             elif (OCTREE==4):
                 kernel_spe_hf  = program.SpectraHF
                 #                                    0     1     2     3           4                  5      
@@ -2197,9 +2208,9 @@ def WriteLOSSpectrum(INI, u, l):
                 # 13      14        15      16   
                 # LCELLS  OFF       PAR     RHO  
                 None,     None,     None,   None, None, 
-                # 17      18        19     20       21        
-                # NCHN    NCOMP     HF     PROFILE  MAP_CENTRE
-                np.int32, np.int32, None,  None,    cl.cltypes.float3 ])
+                # 17      18        19     20       21                  22
+                # NCHN    NCOMP     HF     PROFILE  MAP_CENTRE          TAGABS
+                np.int32, np.int32, None,  None,    cl.cltypes.float3,  np.int32 ])
             else:
                 print("SpectraHF has not been defined for OCTREE=%d" % OCTREE), sys.exit()
             
@@ -2242,16 +2253,16 @@ def WriteLOSSpectrum(INI, u, l):
                     kernel_spe_hf(queue, [GLOBAL,], [LOCAL,],
                     # 0        1        2         3     4          5       6   7    8     9   10         
                     CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity,
-                    # 11        12       13    14    15      16           17     
-                    NTRUE_buf, STAU_buf, nchn, ncmp, HF_buf, PROFILE_buf, centre)
+                    # 11        12       13    14    15      16           17      18   
+                    NTRUE_buf, STAU_buf, nchn, ncmp, HF_buf, PROFILE_buf, centre, TAGABS)
                 elif (OCTREE==4):
                     kernel_spe_hf(queue, [GLOBAL,], [LOCAL,],
                     # 0        1        2         3     4          5       6   7    8     9   10 
                     CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity,
                     # 11       12        13          14       15       16       17       
                     NTRUE_buf, STAU_buf, LCELLS_buf, OFF_buf, PAR_buf, RHO_buf, ABU_buf, 
-                    #  19  19    20      21           22     
-                    nchn,  ncmp, HF_buf, PROFILE_buf, centre)
+                    #  19  19    20      21           22      23 
+                    nchn,  ncmp, HF_buf, PROFILE_buf, centre, TAGABS)
                 else:
                     print("kernel_spe_hfs exists only for OCTREE==0 and OCTREE==4"), sys.exit()
             else:
@@ -2261,9 +2272,9 @@ def WriteLOSSpectrum(INI, u, l):
                     # 0        1        2         3     4          5       6   7    8     9   10          
                     CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity, 
                     # 11       12        13           14           15     
-                    NTRUE_buf, STAU_buf, CRT_TAU_buf, CRT_EMI_buf, centre, 
-                    #  16      17       18            19          20           21            22         
-                    TKIN_buf,  ABU_buf, LOS_EMIT_buf, LENGTH_buf, LOS_RHO_buf, LOS_TKIN_buf, LOS_ABU_buf)
+                    NTRUE_buf, STAU_buf, CRT_TAU_buf, CRT_EMI_buf, centre,
+                    #  16      17       18            19          20           21            22           23
+                    TKIN_buf,  ABU_buf, LOS_EMIT_buf, LENGTH_buf, LOS_RHO_buf, LOS_TKIN_buf, LOS_ABU_buf, TAGABS)
                 else:
                     if (OCTREE):
                         follow = -1
@@ -2273,14 +2284,14 @@ def WriteLOSSpectrum(INI, u, l):
                         CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity, 
                         # 11       12        13          14       15       16       
                         NTRUE_buf, STAU_buf, LCELLS_buf, OFF_buf, PAR_buf, RHO_buf, 
-                        # 17    18      19        20       21            22          23           24            25         
-                        follow, centre, TKIN_buf, ABU_buf, LOS_EMIT_buf, LENGTH_buf, LOS_RHO_buf, LOS_TKIN_buf, LOS_ABU_buf)
+                        # 17    18      19        20       21            22          23           24            25           26    
+                        follow, centre, TKIN_buf, ABU_buf, LOS_EMIT_buf, LENGTH_buf, LOS_RHO_buf, LOS_TKIN_buf, LOS_ABU_buf, TAGABS)
                     else:
                         kernel_spe(queue, [GLOBAL,], [LOCAL,],
                         # 0        1        2         3     4          5       6   7    8     9   10         
                         CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity,
-                        # 11       12        13  14      15        16       17            18          19           20            21      
-                        NTRUE_buf, STAU_buf, -1, centre, TKIN_buf, ABU_buf, LOS_EMIT_buf, LENGTH_buf, LOS_RHO_buf, LOS_TKIN_buf, LOS_ABU_bud)
+                        # 11       12        13  14      15        16       17            18          19           20            21           22
+                        NTRUE_buf, STAU_buf, -1, centre, TKIN_buf, ABU_buf, LOS_EMIT_buf, LENGTH_buf, LOS_RHO_buf, LOS_TKIN_buf, LOS_ABU_bud, TAGABS)
                         
             # save spectrum
             queue.finish()
@@ -2292,7 +2303,7 @@ def WriteLOSSpectrum(INI, u, l):
             # last used row in LOS_EMIT corresponds to the background contribution, LENGTH[steps-1]==-1.1e10
             m = nonzero(tmp<-1e10)
             steps = m[0][0]+1  # we have steps entries, plus one row for background contribution to the spectrum
-            fp    = open('losspectrum_%s_%02d-%02d_%03d.bin' % (MOL.NAME, u, l, iview), 'wb')
+            fp    = open('losspectrum_%s_%02d-%02d_%03d_tag%d.bin' % (MOL.NAME, u, l, iview, TAGABS), 'wb')
             asarray([steps, nchn], int32).tofile(fp)           # actually steps-1 steps + one entry for background
             asarray(tmp[0:steps], float32).tofile(fp)          #  LENGTH
             asarray(LOS_EMIT[0:steps, :], float32).tofile(fp)  #  LOS_EMIT[steps, nchn]

@@ -630,8 +630,9 @@ __kernel void Spectra(
 
 
 
-#if (OCTREE>0) // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#if (WITH_OCTREE>0) // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 // Cartesian grid not implemented - would need to pass density as another parameter
+
 
 __kernel void Spectra_vs_LOS(                             
 #if (WITH_HALF==1)
@@ -669,7 +670,8 @@ __kernel void Spectra_vs_LOS(
                              __global float    *LENGTH,       // 20, 22 LENGTH[maxsteps], step of each individual step
                              __global float    *LOS_RHO,
                              __global float    *LOS_TKIN,
-                             __global float    *LOS_ABU
+                             __global float    *LOS_ABU,
+                             const int         TAGABS         //  1 = observed part of local emission, 2 = local emission without foreground absorptions
                             )
 {
    // single work item, single LOS
@@ -783,7 +785,6 @@ __kernel void Spectra_vs_LOS(
 #endif
       
       
-      
 # if (WITH_HALF==0)
       doppler    =  CLOUD[INDEX].x*DIR.x + CLOUD[INDEX].y*DIR.y + CLOUD[INDEX].z*DIR.z ;
 # else
@@ -833,7 +834,7 @@ __kernel void Spectra_vs_LOS(
          // the contribution of the current step to the final spectrum, each channel separately
          LOS_EMIT[step*CHANNELS+i]  = (emissivity*pro*GN + Cemit)*exp(-SUM_TAU[i])* 
            (  (fabs(dtau)>0.01f)  ? ((1.0f-exp(-dtau))/dtau)  :  (1.0f-dtau*(0.5f-0.166666667f*dtau))  ) ;
-         SUM_TAU[i] +=  dtau  ;
+         if (TAGABS==1)  SUM_TAU[i] +=  dtau  ;
       }     
 #else
       for(i=c1; i<=c2; i++) {         
@@ -843,7 +844,7 @@ __kernel void Spectra_vs_LOS(
          // the contribution of the current step to the final spectrum, each channel separately
          LOS_EMIT[step*CHANNELS+i] = emissivity*profile[i-shift]*GN*exp(-SUM_TAU[i])* 
            (  (fabs(dtau)>0.01f)  ?  ((1.0f-exp(-dtau))/dtau)  :  (1.0f-dtau*(0.5f-0.166666667f*dtau))) ;
-         SUM_TAU[i] += dtau  ;
+         if (TAGABS==1) SUM_TAU[i] += dtau  ;
       }
 #endif
       LENGTH[step]   = dx ;

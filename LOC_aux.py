@@ -256,7 +256,7 @@ def ReadIni(filename):
     'nside'           : 1,                   #  Healpix NSIDE parameter, to generate ray directions
     'Tex'             : [],                  #  save excitation temperatures for listed transitions
     'spectra'         : [],                  #  save spectra for listed transitions
-    'losspectrum'     : 0,                   #  contribution of LOS steps to one spectrum
+    'losspectrum'     : 0,                   #  contribution of LOS steps to one spectrum, 1=escaped, 2=emitted (no fg absorptions)
     'direction'       : [0.0, 0.0],          #  (theta, phi), the direction towards the observer
     'points'          : [10,10],             #  number pixels in the output maps
     'cooling'         : 0,                   #  save cooling rates 
@@ -450,6 +450,7 @@ def ReadIni(filename):
                 if (s[0].find("killemi")==0):      INI.update({'KILL_EMISSION': x})  # kill all emission from cells>x, 1D models only!!
                 if (s[0].find('minmaplevel')==0):  INI.update({'minmaplevel'  : x})
                 if (s[0].find("mapint")==0):       INI.update({'MAP_INTERPOLATION':   x})
+                if (s[0].find('losspec')==0):      INI.update({'losspectrum':  x}) #  1=escaped (observed) radiation, 2=emitted radiation without foreground absorption                
                 if (s[0].find("platform")==0):  
                     INI.update({'platforms':   [x,]})
                     if (len(s)>2): # user also specifies the device within the platform
@@ -465,7 +466,7 @@ def ReadIni(filename):
         if (s[0].find('crtdust')==0):          INI.update({'with_crt':      1})
         if (s[0].find('pickle')==0):           INI.update({'pickle':        1})
         if (s[0].find('methodx')==0):          INI.update({'method_x':      1})
-        if (s[0].find('losspec')==0):          INI.update({'losspectrum':   1})
+        # if (s[0].find('losspec')==0):          INI.update({'losspectrum':   1}) #  1=escaped radiation, 2=emitted radiation without foreground absorption
         #if (s[0].find("FITS")==0):             INI.update({'FITS':          1})
         #if (s[0].find("fits")==0):             INI.update({'FITS':          1})
                 
@@ -1273,7 +1274,9 @@ def ReadDustTau(filename, gl, cells, transitions):
         sys.exit()
     tau  = fromfile(fp, float32).reshape(cells, transitions)
     fp.close()
-    tau[:,:] *= gl/PARSEC    # optical depth per GL
+    tau[:,:] *= gl/PARSEC            # optical depth per GL
+    if (1):
+        tau = clip(tau, 1.0e-30, 1.0e30) # to avoid division-by-zero errors in the update kernel
     return asarray(tau, float32)
 
 

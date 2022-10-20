@@ -1,5 +1,7 @@
 #define DEBUG 0
+#ifndef NULL
 #define NULL 0
+#endif
 #define DIMLIM 29
 #define real  float   // Eq.Eq.!!
 
