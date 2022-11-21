@@ -152,9 +152,92 @@ class MoleculeO:
             self.CUL.append( asarray(d[:,1:3], np.int32)-1 )   # (upper, lower) --- zero offset values
             self.CC.append(  asarray(d[:,3: ], np.float32))    # collisional coefficients
             # next line is again "!COLLISIONS BETWEEN"
+        if (1):
+            """
+            Kernel will later assume that NTKIN is the same for all collisional
+            partners, although coefficients are interpolated independently for each partner.
+            One could interpolate ipartner>0 coefficients for the TKIN grid of the
+            first partner ipartner=0, but that would mean *two* linear interpolations with
+            some loss of precision.
+            Instead, we will just pad the arrays to have the same dimensions and have
+            NTKIN equal to the maximum over the NTKIN values of individual partners.
+            """
+            new_ntkin = 0 
+            for ipartner in range(self.PARTNERS):  
+                new_ntkin = max(new_ntkin, len(self.TKIN[ipartner]))
+                print("    partner %d has %d Tkin values" % (ipartner, len(self.TKIN[ipartner])))
+            # print("new NTKIN = %d" % new_ntkin)
+            # go through the data, pad self.TKIN[iparter] and self.CUL[ipartner] with
+            # more temperatures, if necessary
+            for ipartner in range(self.PARTNERS):
+                n = len(self.TKIN[ipartner])
+                if (n<new_ntkin):
+                    # replace original TKIN vector with a longer one, with new_tkin temperatures
+                    # print('OLD ', ipartner, self.TKIN[ipartner])
+                    self.TKIN[ipartner] = concatenate((self.TKIN[ipartner], 
+                    linspace(1.001*self.TKIN[ipartner][-1], 1.002*self.TKIN[ipartner][-1], new_ntkin-n)))
+                    # print('NEW ', ipartner, self.TKIN[ipartner])
+                    m           =  self.CUL[ipartner].shape[0] # number of transitions
+                    tmp         =  zeros((m, new_ntkin), float32)
+                    tmp[:, 0:n] =  self.CC[ipartner]
+                    for icol in range(n, new_ntkin):
+                        tmp[:,icol] = 1.0001*tmp[:,icol-1] # duplicate values to missing columns
+                    # print('OLD::: ', self.CC[ipartner][0,:])
+                    # replace original CC with the expanded array
+                    self.CC[ipartner] = tmp.copy()
+                    # print('NEW::: ', self.CC[ipartner][0,:])
+                    # print(self.CC[0].shape, self.CC[1].shape)
+        if (1):
+            """
+            Kernel will also assume that the same transitions exist in the same order in the
+            CC arrays => we assume that ipartner=0 has the necessary transitions and all
+            self.CC[ipartner] arrays for ipartner>0 are rearranged to the same size and order.
+            If this is not ok.... one should edit the molecule file before running LOC!
+            """
+            # print(self.CC[1][:,0])
+            for ipartner in range(1, self.PARTNERS):
+                redo = False
+                rows = self.CUL[0].shape[0]
+                cols = len(self.TKIN[0])
+                if (self.CUL[0].shape[0]!=self.CUL[ipartner].shape[0]): 
+                    redo = True
+                else:  # check each transition
+                    for i in range(rows):
+                        if ((self.CUL[0][i][0]!=self.CUL[ipartner][i][0])|(self.CUL[0][i][0]!=self.CUL[ipartner][i][0])):
+                            redo = True
+                if (redo==False): continue   # nothing to do, partner lists the same transitions in the same order
+                tmp = zeros((rows,cols), float32) # recreate the array of collisional coefficients for ipartner
+                for i in range(rows):
+                    u, l =  self.CUL[0][i,:]      # new u->l for row i
+                    for j in range(self.CUL[ipartner].shape[0]):
+                        uu, ll = self.CUL[ipartner][j,:]
+                        if ((u==uu)&(l==ll)):     # transition found also in the orifinal array for ipartner
+                            tmp[i,:] = self.CC[ipartner][j,:]
+                            break
+                self.CUL[ipartner] = self.CUL[0].copy()  # all partners now have the same transitions
+                self.CC[ipartner]  = tmp.copy()          # and the transitions in the same order
+                # Each partner can still have different TKIN values but the number of TKIN values is the same
+                print("")
+                print("================================================================================")
+                print("   Molecule file has different temperature grids and/or different transitions")
+                print("listed for different collisional partners.")
+                print("   In LOC calculations, all partners must have collisional coefficients defined")
+                print("for the *same transitions* and in the *same order* (as for the first partner).")
+                print("They also must have the *same number of Tkin values* although the actual")
+                print("Tkin values in the temperature grid can be different for different partners.")
+                print("   The above is automatically fixed when LOC reads the molecule file. One could")
+                print("also consider converting the input molecule file to fulfill these conditions")
+                print("already before running LOC. This might be needed, for example, to deal with")
+                print("partially missing collisional coefficient (some collisional partner,")
+                print("some transitions), which are now by default simply set to zero.")                
+                print("================================================================================")
+                print("")
+                time.sleep(2)
+            # print(self.CC[1][:,0])
+            # sys.exit()
         ###
         self.CABU = asarray(self.CABU, np.float32)
-        self.TKIN = asarray(self.TKIN, np.float32)
+        # self.TKIN = asarray(self.TKIN, np.float32)
         self.Init()
         if (0):
             for t in range(self.TRANSITIONS):

@@ -10728,7 +10728,7 @@ __kernel void UpdateOT5(  //
          NTRUE[i]     =  NTRUE[i]*exp(-Ttau) + Dleave + Lleave ;
       }  // loop over channels
       // RES[2*INDEX]    += sij ;            // division by VOLUME done in the solver (kernel)
-      // RES[2*INDEX+1]  += all_escaped ;    // divided by VOLUME only oin Solve() !!!
+      // RES[2*INDEX+1]  += all_escaped ;    // divided by VOLUME only in Solve() !!!
       AADD(&(RES[2*INDEX]), sij) ;
       AADD(&(RES[2*INDEX+1]), all_escaped) ;
       

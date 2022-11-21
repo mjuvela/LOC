@@ -522,7 +522,16 @@ MOL_A_buf    =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.
 MOL_UL_buf   =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.TRANSITION)
 MOL_E_buf    =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.E)
 MOL_G_buf    =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.G)
-MOL_TKIN_buf =  cl.Buffer(context, mf.READ_ONLY, 4*PARTNERS*NTKIN)
+MOL_TKIN_buf =  cl.Buffer(context, mf.READ_ONLY, 4*PARTNERS*NTKIN) 
+# -- note -- All partners must have collisional coefficients for the *same transitions*
+#            and in the *same order* (as in MOL.CUL[0]).
+#            They also must have the *same number of Tkin values* but the actual 
+#            TKIN values in the temperature grid can be different for different partners.
+#            The above is ensured when reading the molecule file but one could also
+#            already convert the input molecule files to fulfill these conditions,
+#            before running LOC. This might be needed, for example, to deal with 
+#            partially missing collisional coefficient (some collisional partner,
+#            some transitions).
 MOL_TKIN     =  zeros((PARTNERS, NTKIN), float32)
 for i in range(PARTNERS):
     MOL_TKIN[i, :]  =  MOL.TKIN[i][:]

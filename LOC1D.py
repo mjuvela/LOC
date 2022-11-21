@@ -475,7 +475,7 @@ if (COOLING):
     if (DOUBLE_COOL):
         COOL_buf  = cl.Buffer(context, mf.READ_WRITE, 8*CELLS*GLOBAL)
     else:
-        COOL_buf  = cl.Buffer(context, mf.READ_WRITE, 4*CELLS)
+        COOL_buf  = cl.Buffer(context, mf.READ_WRITE, 4*CELLS)  # ??? *GLOBAL in OS 18-08-2021 ???
 
 WRK  = zeros(CELLS, cl.cltypes.float2)
 
@@ -572,7 +572,7 @@ if (len(INI['load'])>1):
                 NI[icell, 0:levels] =  fromfile(fp, float32, levels)
         else:   # same number of levels in the file and in current calculation
             NI_ARRAY = fromfile(fp, float32).reshape(CELLS, LEVELS)
-        NI_ARRAY = clip(NI_ARRAY, NI_LIMIT, 1e10)
+        NI_ARRAY = clip(NI_ARRAY, NI_LIMIT, 1e20)
         fp.close()
         ok = 1
     except:
@@ -1156,7 +1156,7 @@ for ITER in range(NITER):
     else:          Simulate(INI, MOL) 
     Tsim += Seconds() 
     if (1):  # @@
-        SIJ_ARRAY = clip(SIJ_ARRAY, 0.0, 1.0)
+        SIJ_ARRAY = clip(SIJ_ARRAY, 0.0, 1.0e10)   #  was  1.0 as upper limit...
     # max_change = SolveParallel()   #  64^3  0.18 seconds, 256^3  10.76 seconds
     if (INI['clsolve']):
         max_change =  clip(SolveCL(INI, MOL), 0.0, 1e10)
