@@ -921,7 +921,6 @@ def WriteSpectra(INI, u, l):
         tau.tofile(fptau)      # file containing peak tau for each spectrum
     fp.close()
     fptau.close()
-    print(">>>>>>>", NRA, NDE)
     print("  SPECTRUM %3d  = %2d -> %2d,  <tau_peak> = %.3e" % (tran, u, l, ave_tau/(NRA*NDE)))
     
     
