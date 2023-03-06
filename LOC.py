@@ -819,7 +819,6 @@ def WriteSpectra(INI, u, l):
     STEP        =  INI['grid'] / INI['angle']      # pixel size in GL units
     emissivity  =  (PLANCK/(4.0*pi))*freq*Aul*int2temp    
     direction   =  cl.cltypes.make_float2()
-    offsets                     =  cl.cltypes.make_float2()  # map centre in pixel units
 
     if (HFS): # note -- GAU is for CHANNELS channels = maximum over all bands!!
         for i in range(ncmp):
