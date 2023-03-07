@@ -563,7 +563,7 @@ def ReadIni(filename):
     max_nra, max_nde = 0, 0
     for i in range(len(INI['mapview'])):
         max_nra = max(max_nra, INI['mapview'][i][2])
-        max_nra = max(max_nra, INI['mapview'][i][2])
+        max_nde = max(max_nde, INI['mapview'][i][3])
     INI['points'] = [ max_nra, max_nde]
     # INI['direction'] is no longer needed
     INI['direction'] = []
