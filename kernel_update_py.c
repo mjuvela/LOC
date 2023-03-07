@@ -441,7 +441,7 @@ __kernel void Spectra(
                       constant float *CRT_EMI         //  dust emission photons/c/channel/H
 #endif
                       ,
-                      const float2 CENTRE             //  map centre in units of the pixel size
+                      const float3 CENTRE             //  map centre in units of the pixel size
                      )
 {
    // each work item calculates one spectrum for 
@@ -487,9 +487,15 @@ __kernel void Spectra(
    }
    // printf("OBS = %.4f %.4f %.4f    RA = %.4f %.4f %.4f    DE = %.4f %.4f %.4f \n", DIR.x, DIR.y, DIR.z,  RV.x, RV.y, RV.z,  DV.x, DV.y, DV.z) ;
    // Offsets in RA and DE directions
+# if 0
    POS.x  +=  (RA-CENTRE.x)*STEP*RV.x + (DE-CENTRE.y)*STEP*DV.x ;
    POS.y  +=  (RA-CENTRE.x)*STEP*RV.y + (DE-CENTRE.y)*STEP*DV.y ;
    POS.z  +=  (RA-CENTRE.x)*STEP*RV.z + (DE-CENTRE.y)*STEP*DV.z ;
+# else
+   POS.x  =  CENTRE.x + (RA-0.5*(NRA-1.0f))*STEP*RV.x + DE*STEP*DV.x ;
+   POS.y  =  CENTRE.y + (RA-0.5*(NRA-1.0f))*STEP*RV.y + DE*STEP*DV.y ;
+   POS.z  =  CENTRE.z + (RA-0.5*(NRA-1.0f))*STEP*RV.z + DE*STEP*DV.z ;   
+# endif
    // Change DIR to direction away from the observer
    DIR *= -1.0f ;
 #else
@@ -958,7 +964,7 @@ __kernel void SpectraHF(
                         const int NCHN,                // 13 channels (in case of HF spectrum)
                         const int NCOMP,               // 14 number of components
                         __global float2 *HF,           // 15 channel offsets, weights
-                        const float2 CENTRE            // 16 map centre in pixel units (offset)
+                        const float3 CENTRE            // 16 map centre in pixel units (offset)
                        )
 {
    // printf("SpectraHF\n") ;
@@ -1007,9 +1013,15 @@ __kernel void SpectraHF(
    }
    // printf("OBS = %.4f %.4f %.4f    RA = %.4f %.4f %.4f    DE = %.4f %.4f %.4f \n",          DIR.x, DIR.y, DIR.z,  RV.x, RV.y, RV.z,  DV.x, DV.y, DV.z) ;
    // Offsets in RA and DE directions
+#if 0
    POS.x  +=  (RA-CENTRE.x)*STEP*RV.x + (DE-CENTRE.y)*STEP*DV.x ;
    POS.y  +=  (RA-CENTRE.x)*STEP*RV.y + (DE-CENTRE.y)*STEP*DV.y ;
    POS.z  +=  (RA-CENTRE.x)*STEP*RV.z + (DE-CENTRE.y)*STEP*DV.z ;
+# else
+   POS.x  =  CENTRE.x + (RA-0.5*(NRA-1.0f))*STEP*RV.x + DE*STEP*DV.x ;
+   POS.y  =  CENTRE.y + (RA-0.5*(NRA-1.0f))*STEP*RV.y + DE*STEP*DV.y ;
+   POS.z  =  CENTRE.z + (RA-0.5*(NRA-1.0f))*STEP*RV.z + DE*STEP*DV.z ;   
+# endif   
    // Change DIR to direction away from the observer
    DIR *= -1.0f ;
 # else

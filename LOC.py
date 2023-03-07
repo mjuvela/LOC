@@ -122,6 +122,7 @@ print(OPT)
 # Note: unlike in 1d versions, both SIJ and ESC are divided by VOLUME only in the solver
 #       3d and octree use kernel_LOC_aux.c, where the solver is incompatible with the 1d routines !!!
 if (OCTREE):
+    print("*** LOC.py should be used only with pure Cartesian grids => use LOC_OT.py for octree models ***")
     source    =  open(INSTALL_DIR+"/kernel_update_py_OT.c").read()
 else:
     source    =  open(INSTALL_DIR+"/kernel_update_py.c").read()
@@ -819,6 +820,15 @@ def WriteSpectra(INI, u, l):
     STEP        =  INI['grid'] / INI['angle']      # pixel size in GL units
     emissivity  =  (PLANCK/(4.0*pi))*freq*Aul*int2temp    
     direction   =  cl.cltypes.make_float2()
+    centre       =  cl.cltypes.make_float3()
+
+    theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][0]
+    direction['x'], direction['y'] = theta, phi    
+    centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ
+    if (isfinite(xc*yc*zc)):
+        centre['x'], centre['y'], centre['z']  =   xc, yc, zc
+    print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
+                                        
 
     if (HFS): # note -- GAU is for CHANNELS channels = maximum over all bands!!
         for i in range(ncmp):
@@ -838,7 +848,7 @@ def WriteSpectra(INI, u, l):
         #                                 0     1     2     3           4                  5
         kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
         # 6         7         8           9           10          11    12    13    14    15                
-        np.float32, np.int32, np.float32, np.float32, np.float32, None, None, None, None, cl.cltypes.float2])
+        np.float32, np.int32, np.float32, np.float32, np.float32, None, None, None, None, cl.cltypes.float3 ])
     else:
         if (OCTREE):
             kernel_spe  = program.Spectra        
@@ -847,13 +857,13 @@ def WriteSpectra(INI, u, l):
             # 6         7         8           9           10          11    12  
             np.float32, np.int32, np.float32, np.float32, np.float32, None, None,
             # 13   14     15    16   17                
-            None,  None, None, None, cl.cltypes.float2,])
+            None,  None, None, None, cl.cltypes.float3 ])
         else:
             kernel_spe  = program.Spectra        
             #                                 0     1     2     3           4                  5
             kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
             # 6         7         8           9           10          11    12    13                
-            np.float32, np.int32, np.float32, np.float32, np.float32, None, None, cl.cltypes.float2,])
+            np.float32, np.int32, np.float32, np.float32, np.float32, None, None, cl.cltypes.float3 ])
         
     if (HFS):
         kernel_spe_hf  = program.SpectraHF
@@ -865,7 +875,7 @@ def WriteSpectra(INI, u, l):
         np.float32, np.int32, np.float32, np.float32, np.float32, None,   None,
         # 13      14        15    16                
         # NCHN    NCOMP     HF    map_offsets
-        np.int32, np.int32, None, cl.cltypes.float2,])
+        np.int32, np.int32, None, cl.cltypes.float3 ])
         
     wrk         =  (tmp_1 * Aul * (NI_ARRAY[:,l]*gg-NI_ARRAY[:,u])) / (freq*freq)
     wrk         =  clip(wrk, 1.0e-25, 1e10)    
@@ -887,27 +897,29 @@ def WriteSpectra(INI, u, l):
         DE      =  +(de-0.5*(NDE-1.0))*STEP
         if (HFS): # since CHANNELS has been changed, all transitions written using this kernel ???
             kernel_spe_hf(queue, [GLOBAL,], [LOCAL,],
-            # 0        1        2         3     4          5       6   7    8     9   10          11         12      
+            # 0        1        2         3     4          5       6   7    8     9   10          11         12
             CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity, NTRUE_buf, STAU_buf,
-            nchn, ncmp, HF_buf)            
+            nchn, ncmp, HF_buf, centre)
         else:
             if (WITH_CRT):
                 kernel_spe(queue, [GLOBAL,], [LOCAL,],
                 # 0        1        2         3     4          5       6   7    8     9   10          11         12       
                 CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity, NTRUE_buf, STAU_buf,
                 # 13         14         
-                CRT_TAU_buf, CRT_EMI_buf)
+                CRT_TAU_buf, CRT_EMI_buf, centre)
             else:
                 if (OCTREE):
                     kernel_spe(queue, [GLOBAL,], [LOCAL,],
                     # 0        1        2         3     4          5       6   7    8     9   10         
                     CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity, 
                     # 11       12        13          14       15       16     
-                    NTRUE_buf, STAU_buf, LCELLS_buf, OFF_buf, PAR_buf, RHO_buf)
+                    NTRUE_buf, STAU_buf, LCELLS_buf, OFF_buf, PAR_buf, RHO_buf, centre)
                 else:
                     kernel_spe(queue, [GLOBAL,], [LOCAL,],
-                    # 0        1        2         3     4          5       6   7    8     9   10          11         12      
-                    CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity, NTRUE_buf, STAU_buf)
+                    # 0        1        2         3     4          5       6   7    8     9   10         
+                    CLOUD_buf, GAU_buf, LIM_buf, GNORM, direction, NI_buf, DE, NRA, STEP, BG, emissivity,
+                    #  11         12       13   
+                    NTRUE_buf, STAU_buf,   centre)
         # save spectrum
         cl.enqueue_copy(queue, NTRUE, NTRUE_buf)
         for ra in range(NRA):
