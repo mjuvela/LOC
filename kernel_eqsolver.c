@@ -94,9 +94,9 @@ __kernel SolveCL(const int         BATCH,         //  0 number of cells per kern
                  __global float3  *MOL_AUL,       //  2 MOL_AUL[TRANSITIONS] =  A, U, L  (radiative!)
                  __global float   *MOL_EG,        //  3 MOL_EG[LEVELS]       =  E, G
                  const int         PARTNERS,      //  4 number of collisional partners
-                 const int         NTKIN,         //  5 number of Tkin for collisions -- same for all partners !!!???
+                 const int         NTKIN,         //  5 number of Tkin for collisions -- same for all partners !!!
                  const int         NCUL,          //  6 number of rows in C arrays
-                 __global float   *MOL_TKIN,      //  7 MOL_TKIN[PARTNERS, NTKIN]
+                 __global float   *MOL_TKIN,      //  7 MOL_TKIN[PARTNERS, NTKIN] => Tkin grid may be different for each partner
                  __global int     *MOL_CUL,       //  8 MOL_CUL[PARTNERS, NCUL, 2]
                  __global float   *MOL_C,         //  9 MOL_C[PARTNERS, NCUL, NTKIN]
                  __global float   *MOL_CABU,      // 10 MOL_CAB[PARTNERS]  --- no spatial variation yet

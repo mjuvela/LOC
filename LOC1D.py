@@ -506,7 +506,7 @@ for i in range(1, PARTNERS):
         print("SolveCL assumes the same number of Tkin for each collisional partner!!"), sys.exit()
 MOL_TKIN = zeros((PARTNERS, NTKIN), float32)
 for i in range(PARTNERS):
-    MOL_TKIN[i, :]  =  MOL.TKIN[i][:]
+    MOL_TKIN[i, :]  =  MOL.TKIN[i][:]  # each partner potentially using different Tkin grid
 MOL_TKIN_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL_TKIN)
 # CUL  -- levels are included separately for each partner... must have the same number of rows!
 #         KERNEL ASSUMES IT IS THE SAME TRANSITIONS, IN THE SAME ORDER

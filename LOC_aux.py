@@ -154,13 +154,16 @@ class MoleculeO:
             # next line is again "!COLLISIONS BETWEEN"
         if (1):
             """
-            Kernel will later assume that NTKIN is the same for all collisional
+            Kernel will later assume that *NTKIN is the same* for all collisional
             partners, although coefficients are interpolated independently for each partner.
             One could interpolate ipartner>0 coefficients for the TKIN grid of the
             first partner ipartner=0, but that would mean *two* linear interpolations with
             some loss of precision.
             Instead, we will just pad the arrays to have the same dimensions and have
             NTKIN equal to the maximum over the NTKIN values of individual partners.
+            The collisional coefficient for the highest listed temperature is used to fill in 
+            the missing entries for the additional higher temperatures (hopefully those
+            temperatures do not exist in the model!).
             """
             new_ntkin = 0 
             for ipartner in range(self.PARTNERS):  
@@ -173,6 +176,7 @@ class MoleculeO:
                 n = len(self.TKIN[ipartner])
                 if (n<new_ntkin):
                     # replace original TKIN vector with a longer one, with new_tkin temperatures
+                    # the value for the highest temperature is used to fill in the missing values
                     # print('OLD ', ipartner, self.TKIN[ipartner])
                     self.TKIN[ipartner] = concatenate((self.TKIN[ipartner], 
                     linspace(1.001*self.TKIN[ipartner][-1], 1.002*self.TKIN[ipartner][-1], new_ntkin-n)))
@@ -181,7 +185,7 @@ class MoleculeO:
                     tmp         =  zeros((m, new_ntkin), float32)
                     tmp[:, 0:n] =  self.CC[ipartner]
                     for icol in range(n, new_ntkin):
-                        tmp[:,icol] = 1.0001*tmp[:,icol-1] # duplicate values to missing columns
+                        tmp[:,icol] = 1.0001*tmp[:,icol-1] # generate values to missing columns
                     # print('OLD::: ', self.CC[ipartner][0,:])
                     # replace original CC with the expanded array
                     self.CC[ipartner] = tmp.copy()
@@ -189,7 +193,7 @@ class MoleculeO:
                     # print(self.CC[0].shape, self.CC[1].shape)
         if (1):
             """
-            Kernel will also assume that the same transitions exist in the same order in the
+            Kernel will also assume that *the same transitions* exist in the same order in the
             CC arrays => we assume that ipartner=0 has the necessary transitions and all
             self.CC[ipartner] arrays for ipartner>0 are rearranged to the same size and order.
             If this is not ok.... one should edit the molecule file before running LOC!
@@ -211,12 +215,15 @@ class MoleculeO:
                     u, l =  self.CUL[0][i,:]      # new u->l for row i
                     for j in range(self.CUL[ipartner].shape[0]):
                         uu, ll = self.CUL[ipartner][j,:]
-                        if ((u==uu)&(l==ll)):     # transition found also in the orifinal array for ipartner
+                        if ((u==uu)&(l==ll)):     # transition found also in the original array for ipartner
                             tmp[i,:] = self.CC[ipartner][j,:]
+                            # note: if the transition u->l is not found for the current collisional partner ipartner,
+                            #      the corresponding collisional coefficients in CC[] will remain zero
                             break
                 self.CUL[ipartner] = self.CUL[0].copy()  # all partners now have the same transitions
-                self.CC[ipartner]  = tmp.copy()          # and the transitions in the same order
+                self.CC[ipartner]  = tmp.copy()          # in the same order
                 # Each partner can still have different TKIN values but the number of TKIN values is the same
+                # => kernel will use TKIN vector of each collisional partner separately
                 print("")
                 print("================================================================================")
                 print("   Molecule file has different temperature grids and/or different transitions")
