@@ -312,7 +312,7 @@ __kernel void Overlap(
                       __constant float  *BLU,     //  3 A_b [TRANSITIONS] = B_lu * h*f / (4*pi)
                       __global   float  *GAU,     //  4 precalculated gaussian profiles [CELLS*CHANNELS]
                       __constant int2   *LIM,     //  5 first and last significant channels
-                      __constant float  *GN,      //  6 gauss normalisation [TRANSITIONS] -- GL **NOT** inlcuded
+                      __constant float  *GN,      //  6 gauss normalisation [TRANSITIONS] -- GL **NOT** included
                       __global   float  *DIRWEI,  //  7 individual weights for the rays
                       __global   float  *STEP,    //  8 average path length [NRAY*CELLS] (GL)
                       __global   float  *APL,     //  9 average path length [CELLS] (GL)

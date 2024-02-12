@@ -162,6 +162,7 @@ if (0):
 LOWMEM      =  INI['lowmem']
 COOLING     =  INI['cooling']
 MAXCHN      =  INI['channels']
+MAXCMP      =  1
 
 if (COOLING & HFS):
     print("*** Cooling not implemented for HFS => cooling will not be calculated!")
@@ -170,13 +171,23 @@ if (HFS):
     BAND, MAXCHN, MAXCMP = ReadHFS(INI, MOL)     # MAXCHN becomes the maximum over all transitions
     print("HFS revised =>  CHANNELS %d,  MAXCMP = %d" % (CHANNELS, MAXCMP))
     HF      =  zeros(MAXCMP, cl.cltypes.float2)
-    if (0):
-        print("--------------------------------------------------------------------------------")
-        for i in range(len(BAND)):
-            b = BAND[i]
-            print("%2d components  BW %5.2f W %5.2f  VMIN %5.2f VMAX %5.2f chn %4d" % \
-            (b.N, b.BANDWIDTH, b.WIDTH, b.VMIN, b.VMAX, b.Channels()))
-        print("--------------------------------------------------------------------------------")
+
+    
+WITH_OVERLAP  = (len(INI['overlap'])>0)
+if (WITH_OVERLAP):
+    OLBAND, OLTRAN, OLOFF, MAXCMP = ReadOverlap(INI['overlap'], MOL, WIDTH, TRANSITIONS, CHANNELS)
+    ##
+    SINGLE = ones(TRANSITIONS, int32)  # by default all transitions single
+    MAXCHN = 0
+    for iband in range(OLBAND.Bands()):
+        for icmp in range(OLBAND.Components(iband)):
+            SINGLE[OLBAND.GetTransition(iband, icmp)] = 0  # transition part of a wider band (overlap)
+        MAXCHN = max([MAXCHN, OLBAND.Channels(iband)])     # Channels() == extra channels!
+        MAXCMP = max([MAXCMP, OLBAND.NCMP[iband]])
+        print("OVERLAP => CHANNELS %d, MAXCHN %d, MAXCMP %d" % (CHANNELS, MAXCHN, MAXCMP))
+        for i in range(TRANSITIONS):
+            print("  SINGLE[%d] = %d" % (i, SINGLE[i]))
+    MAXCHN += CHANNELS
     
 print("TRANSITIONS %d, CELLS %d = %d x %d x %d" % (TRANSITIONS, CELLS, NX, NY, NZ))
 SIJ_ARRAY, ESC_ARRAY = None, None
@@ -208,6 +219,7 @@ if (WITH_CRT):
     
 # unlike for LOC1D.py which has GAU[TRANSITIONS, CELLS, CHANNELS], LOC.py still has
 # GAU[GNO, CHANNELS] ... we probably should have this in global memory, not to restrict GNO.
+# overlap uses the same LIM
 GAUSTORE = '__global'
 GNO      =  100      # number of precalculated Gaussians
 G0, GX, GAU, LIM =  GaussianProfiles(INI['min_sigma'], INI['max_sigma'], GNO, CHANNELS, WIDTH)
@@ -257,18 +269,19 @@ elif (OCTREE in [40,]):  # one work item per ray
 # TAUSAVE = (OCTREE>0)&(INI['tausave']>0)
 TAUSAVE = (INI['tausave']>0)
 
-# note -- CHANNELS is compile-time parameter, not changed by HFS
+# note -- CHANNELS is compile-time parameter, not changed by HFS or OVERLAP
 OPT = " -D NX=%d -D NY=%d -D NZ=%d -D NRAY=%d -D CHANNELS=%d -D WIDTH=%.5ff -D ONESHOT=%d \
 -D VOLUME=%.5ef -D CELLS=%d -D LOCAL=%d -D GLOBAL=%d -D GNO=%d -D SIGMA0=%.5ff -D SIGMAX=%.4ff \
 -D GL=%.4ef -D MAXCHN=%d -D WITH_HALF=%d -D PLWEIGHT=%d -D LOC_LOWMEM=%d -D CLIP=%.3ef -D BRUTE_COOLING=%d \
 -D LEVELS=%d -D TRANSITIONS=%d -D WITH_HFS=%d -D WITH_CRT=%d -D DOUBLE_POS=%d -D MAX_NBUF=%d \
 -I%s -D OTLEVELS=%d -D NWG=%d -D WITH_OCTREE=%d -D GAUSTORE=%s -D WITH_ALI=%d -D FIX_PATHS=%d \
--D MINMAPLEVEL=%d -D MAP_INTERPOLATION=%d -D TAUSAVE=%d" % \
-(NX, NY, NZ, NRAY, CHANNELS, WIDTH, ONESHOT, VOLUME, CELLS, LOCAL, GLOBAL, GNO, G0, GX,
+-D MINMAPLEVEL=%d -D MAP_INTERPOLATION=%d -D TAUSAVE=%d -D WITH_OVERLAP=%d -D MAXCMP=%d" % \
+(NX, NY, NZ, NRAY, CHANNELS, WIDTH, ONESHOT, 
+VOLUME, CELLS, LOCAL, GLOBAL, GNO, G0, GX,
 GL, MAXCHN, WITH_HALF, PLWEIGHT, LOWMEM, INI['clip'], (COOLING==2),
 LEVELS, TRANSITIONS, HFS, WITH_CRT, DOUBLE_POS, MAX_NBUF, 
 INSTALL_DIR, OTL, NWG, OCTREE, GAUSTORE, WITH_ALI, FIX_PATHS, 
-int(INI['minmaplevel']), INI['MAP_INTERPOLATION'], TAUSAVE)
+int(INI['minmaplevel']), INI['MAP_INTERPOLATION'], TAUSAVE, WITH_OVERLAP, MAXCMP)
 
 if (0):
     # -cl-fast-relaxed-math == -cl-mad-enable -cl-no-signed-zeros -cl-unsafe-math-optimizations -cl-finite-math-only
@@ -286,10 +299,10 @@ if (1):
 # Note: unlike in 1d versions, both SIJ and ESC are divided by VOLUME only in the solver
 #       3d and octree use kernel_LOC_aux.c, where the solver is incompatible with the 1d routines !!!
 source    =  open(INSTALL_DIR+"/kernel_update_py_OT.c").read()
-# @ MAXL3_P20.0 WITH_HALF   10.7/9.6   s1   65/7.5  68645100 7834372
-# @ gid   54746 ------  NBUF = 50 !!!!!!!!!!!!!!!!!!!!!!
-# @ during run 68646124 7834372
-# @ MAXL3_P20.0 WITH_HALF   10.7/9.6    65.5/7.5
+#  MAXL3_P20.0 WITH_HALF   10.7/9.6   s1   65/7.5  68645100 7834372
+#  gid   54746 ------  NBUF = 50 !
+#  during run 68646124 7834372
+#  MAXL3_P20.0 WITH_HALF   10.7/9.6    65.5/7.5
 print("--- Create program -------------------------------------------------------------")
 print("")
 program       =  cl.Program(context, source).build(OPT, cache_dir=None)
@@ -325,8 +338,9 @@ if (OCTREE>0):
         kernel_paths =  program.PathsOT40        
 else:
     print("USING  program.Update")
-    kernel_sim       =  program.Update
-    if (PLWEIGHT):  kernel_paths     =  program.Paths
+    kernel_sim                           =  program.Update
+    if (WITH_OVERLAP):  kernel_sim_ol    =  program.UpdateOL
+    if (PLWEIGHT):      kernel_paths     =  program.Paths
 
 kernel_solve         =  program.SolveCL
 kernel_parents       =  program.Parents
@@ -350,6 +364,21 @@ else:
         # 10        11          12         13      14      15      16     17    
         # DIRWEI    EWEI        LEADING    POS0    DIR     NI      RES    NTRUE 
         np.float32, np.float32, np.int32,  REAL3,  FLOAT3, None,  None,   None  ])
+        if (WITH_OVERLAP):
+            kernel_sim_ol.set_scalar_arg_dtypes([
+            # 0        1         2          3           4            5       6                  7                           
+            # NCMP     NCHN,     Aul[NCMP]  A_b[NCMP]   GN           COFF,   NI[2,NCMP,CELLS]   NTRUES[GLOBAL, NCMP, MAXCHN]
+            np.int32,  np.int32, None,      None,       np.float32,  None,    None,             None,
+            # 8       9       10                 11        12      13          14    
+            # id0     CLOUD   GAU[GNO,CHANNELS]  LIM[GNO]  PL      APL         BG    
+            np.int32, None,   None,              None,     None,   np.float32, np.float32,
+            # 15        16           17         18         19       20                 
+            # DIRWEI    EWEI         LEADING    POS0       DIR      RES[2, NCMP, CELLS]
+            np.float32, np.float32,  np.int32,  REAL3,     FLOAT3,  None,
+            # 21       22        23    
+            # TAU      EMIT      TT    
+            None,      None,     None   ])
+            
     elif (OCTREE==1):
         if (PLWEIGHT>0):
             kernel_sim.set_scalar_arg_dtypes([
@@ -499,7 +528,7 @@ else:
     
 NI_buf    =  cl.Buffer(context, mf.READ_ONLY,   8*CELLS)                          # nupper, nb_nb
 if (WITH_ALI>0):
-    RES_buf   =  cl.Buffer(context, mf.READ_WRITE,  8*CELLS)                      # SIJ, ESC
+    RES_buf   =  cl.Buffer(context, mf.READ_WRITE,  8*CELLS)                      # SIJ, ESC  RES[CELLS,2]
 else:
     RES_buf   =  cl.Buffer(context, mf.READ_WRITE,  4*CELLS)                      # SIJ only
 HF_buf    =  None
@@ -510,6 +539,7 @@ if (COOLING==2):
     COOL_buf = cl.Buffer(context,mf.WRITE_ONLY, 4*CELLS)
 
 # 2021-07-14 -- INI['points'] is now the maximum over all map views
+print("NTRUE_buf %d spectra x %d channels" % (max([INI['points'][0], NRAY]), MAXCHN))
 NTRUE_buf =  cl.Buffer(context, mf.READ_WRITE, 4*max([INI['points'][0], NRAY])*MAXCHN)
 STAU_buf  =  cl.Buffer(context, mf.READ_WRITE, 4*max([INI['points'][0], NRAY])*MAXCHN)
 WRK       =  np.zeros((CELLS,2), np.float32)     #  NI=(nu, nb_nb)  and  RES=(SIJ, ESC)
@@ -560,6 +590,8 @@ MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.C
 # new buffer for matrices and the right side of the equilibriumm equations
 BATCH        =  max([1,CELLS//max([LEVELS, TRANSITIONS])]) # now ESC, SIJ fit in NI_buf
 BATCH        =  min([BATCH, CELLS, 16384])        #  16384*100**2 = 0.6 GB
+##  BATCH    =  16384  # @@@
+
 
 SOL_WRK_buf  = cl.Buffer(context, mf.READ_WRITE, 4*BATCH*LEVELS*(LEVELS+1))
 SOL_RHO_buf  = cl.Buffer(context, mf.READ_ONLY,  4*BATCH)
@@ -621,19 +653,18 @@ if (OCTREE>0):
     program.Parents(queue, [GLOBAL,], [LOCAL,], RHO_buf, LCELLS_buf, OFF_buf, PAR_buf)
 
 
-PROFILE_buf = cl.Buffer(context, mf.READ_WRITE, 4)  # dummy
+PROFILE_buf = None
 if ((LOWMEM>0) & HFS):
     # the writing of spectra needs GLOBAL*MAXCHN for the profile vectors
-    print("PROFILE BUFFER ALLOCATED FOR %d x %d = %.3e FLOATS" % (GLOBAL, MAXCHN, GLOBAL*MAXCHN))
-    PROFILE_buf = cl.Buffer(context, mf.READ_WRITE, 4*GLOBAL*MAXCHN)
+    # lowmem>1 does not work with writing of HFS spectra ??? 2023-12-02
+    # => allocation must be max(GLOBAL,NRA), where NRA>GLOBAL possible for large maps
+    theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][0]
+    tmp = max(NRA, GLOBAL)
+    PROFILE_buf = cl.Buffer(context, mf.READ_WRITE, 4*tmp*MAXCHN)
+    print("PROFILE BUFFER ALLOCATED FOR %d x %d = %.3e FLOATS" % (tmp, MAXCHN, tmp*MAXCHN))
 else:
     PROFILE_buf = cl.Buffer(context, mf.READ_WRITE, 4)  # dummy
     
-    
-    
-if (0):
-    print("Stopping before calculations...")
-    sys.exit()
     
 
 # 2020-06-26 using  DIRWEI ==  normalisation factor <cos theta>, calculated for the NDIR directions
@@ -829,10 +860,9 @@ if (INI['iterations']>0):
             print("<PL> for root grid cells: %.3e +- %.3e" % (mean(PL[0:NX*NY*NZ][m[0]]), std(PL[0:NX*NY*NZ][m[0]])))
         # print("PL[20444] = %8.4f" % PL[20444])
     print("Paths kernel: %.3f seconds" % (time.time()-t00))
-    # @   WITH_HALF=1   68646124 7840992   65.5/7.7 GB
+    #    WITH_HALF=1   68646124 7840992   65.5/7.7 GB
     # print('DIRWEI     ', DIRWEI)
     
-    # @@ 
     if (0):
         print("SAVING PL%d.dat" % OCTREE)
         PL.tofile('PL%d.dat' % OCTREE)
@@ -983,7 +1013,7 @@ if (1):
     m = nonzero(~isfinite(sum(NI_ARRAY, axis=1)))
     if (len(m[0])>0):
         print("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-        print("NI_ARRAY READ ---- %d WITH DATA NOT FINITE !!!!!!!" % (len(m[0])))
+        print("NI_ARRAY READ ---- %d WITH DATA NOT FINITE !" % (len(m[0])))
         for i in m[0]:
             NI_ARRAY[i,:] = LTE_10_pop * RHO[i]*ABU[i]
         print("???? FIXED ????")
@@ -997,7 +1027,7 @@ if (1):
 #================================================================================
 
 
-# @ 65.5/7.7 GB   68646124 7840992
+#  65.5/7.7 GB   68646124 7840992
 # [  +0.000000] amdgpu 0000:3e:00.0: VM_L2_PROTECTION_FAULT_STATUS:0x00301031
 
 
@@ -1005,7 +1035,9 @@ if (1):
 def Simulate():
     global INI, MOL, queue, LOCAL, GLOBAL, WIDTH, VOLUME, GL, COOLING, NSIDE, HFS
     global RES_buf, GAU_buf, CLOUD_buf, NI_buf, LIM_buf, PL, EWEI, PL_buf
-    global ESC_ARRAY, SIJ_ARRAY, PACKETS
+    global ESC_ARRAY, SIJ_ARRAY, PACKETS, OLBAND
+
+    niter   =  0
     ncmp    =  1
     tmp_1   =  C_LIGHT*C_LIGHT/(8.0*pi)
     Tbg     =  INI['Tbg']
@@ -1023,12 +1055,19 @@ def Simulate():
         freq          =  MOL.F[tran]
         gg            =  MOL.GG[tran]
         BG            =  1.0
+        
+        if (WITH_OVERLAP): # in Simulate() skip transitions that are part of OVERLAP lines
+            skip = False
+            for icmp in range(OLBAND.BANDS):
+                if (tran in OLBAND.TRAN[icmp]): skip = True
+            if (skip): continue
+        
         if (1):
             # 2021-01-13 -- weighting directly by cos(theta)/DIRWEI where DIRWEI = sum(cos(theta)) for each side
             #  BGPHOT = number of photons per a single surface element, not the whole cloud
             #  ***AND*** only photons into the solid angle where the largest vector component is 
-            #            perpendicular to the surface element !!!!!
-            #            instead of pi, integral is 1.74080 +-   0.00016   ==> total number of photons per LEADING
+            #            perpendicular to the surface element !
+            #            instead of pi, integral is 1.74080 +-   0.00016  => total number of photons per LEADING
             BGPHOT        =  Planck(freq, Tbg)* 1.74080         /(PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
         else:
             #  BGPHOT = total number of photons entering the cloud via area == AREA
@@ -1037,7 +1076,7 @@ def Simulate():
             # individual packages have additional relative weights, dirwei/DIRWEI == cos(theta) / <cos(theta)>
             BG        =  BGPHOT/PACKETS    
 
-        # print("TRAN=%2d  ==>  BGPHOT = BG*PACKETS = %12.4e" % (tran, BGPHOT))
+        # print("TRAN=%2d  =>  BGPHOT = BG*PACKETS = %12.4e" % (tran, BGPHOT))
         
         if (HFS):
             nchn = BAND[tran].Channels()
@@ -1050,12 +1089,14 @@ def Simulate():
         if (WITH_CRT):
             cl.enqueue_copy(queue, CRT_TAU_buf, asarray(CRT_TAU[:,tran].copy(), float32))
             cl.enqueue_copy(queue, CRT_EMI_buf, asarray(CRT_EMI[:,tran].copy(), float32))
-        ###
+        
+            
+        
         GNORM         = (C_LIGHT/(1.0e5*WIDTH*freq)) * GL  # GRID_LENGTH multiplied to gauss norm
         if (INI['verbose']<2):
              sys.stdout.write(' %2d' % tran)
              sys.stdout.flush()
-        kernel_clear(queue, [GLOBAL,], [LOCAL,], RES_buf)
+        kernel_clear(queue, [GLOBAL,], [LOCAL,], RES_buf)  # RES[CELLS,2] for ALI
 
         # Upload NI[upper] and NB_NB[tran] values
         tmp  =  tmp_1 * Aul * (NI_ARRAY[:,lower]*gg-NI_ARRAY[:,upper]) / (freq*freq)  # [CELLS]
@@ -1066,7 +1107,7 @@ def Simulate():
         else:
             tmp = np.clip(tmp, 1.0e-25, 1.0e32)        # KILL ALL MASERS  $$$
             
-        WRK[:,0]  = NI_ARRAY[:, upper]   # ni
+        WRK[:,0]  = NI_ARRAY[:, upper]   # ni          WRK[CELLS,2]
         WRK[:,1]  = tmp                  # nb_nb
         cl.enqueue_copy(queue, NI_buf, WRK)
         # the next loop is 99% of the Simulate() routine run time
@@ -1083,22 +1124,22 @@ def Simulate():
             print("  BGPHOT  %12.4e" % BGPHOT)
             print("  PACKETS %d"     % PACKETS)
             print("  BG      %12.4e" % Planck(freq, Tbg))
+            print("  NI      %12.4e" % (np.mean(WRK[:,0])))
+            print("  NBNB    %12.4e" % (np.mean(WRK[:,1])))
 
 
         SUM_DIRWEI = 0.0   # weight ~ cos(theta)/sum(cos(theta)) ... should sum to 1.0 for each side, 6.0 total
         
-        for idir in range(NDIR):
-            
+        for idir in range(NDIR):            
             inner_loop = 4*offs*offs
             if (ONESHOT): inner_loop = 1    # for  OCTREE=4, OCTREE=40
-            
             for ioff in range(inner_loop):  # 4 staggered initial positions over 2x2 cells -- if ONESHOT==0
                 
+                ## if ((idir!=0)|(ioff!=0)): continue 
+                
+                
                 POS, DIR, LEADING  =  GetHealpixDirection(NSIDE, ioff, idir, NX, NY, NZ, offs, DOUBLE_POS) # < 0.001 seconds !
-                
-                # print("IDIR %3d/%3d   IOFF %2d/%2d   %7.4f %7.4f %7.4f" % (idir+1, NDIR, ioff, 4*offs*offs, DIR['x'], DIR['y'], DIR['z']))
-                dirwei, ewei = 1.0, 1.0
-                
+                dirwei, ewei = 1.0, 1.0                
                 if (1):
                     # 2021-01-13 --- BGPHOT * cos(theta)/DIRWEI, DIRWEI = sum(cos(theta)) for each side separately
                     # there is no change at this point, except that DIRWEI is sum, not the average cos(theta)
@@ -1113,6 +1154,7 @@ def Simulate():
                         dirwei   =  fabs(DIR['z']) / DIRWEI[LEADING]
                         ewei     =  float32(EWEI / abs(DIR['z']))                    
                     BG     = BGPHOT * dirwei
+                    # print("idir = %3d   ioff = %3d  =>   BG = %.3e" % (idir, ioff, BG))
                     SUM_DIRWEI += dirwei
                     dirwei = 1.0        # this is the weight factor that goes to kernel... now not used
                 else:
@@ -1235,7 +1277,15 @@ def Simulate():
                             print("HFS + OCTREE%d not yet implemented" % OCTREE), sys.exit()
                         
                 queue.finish()
-        
+
+                
+                if (0):
+                    print("NOL HOST: Aul %.3e Ab %.3e GN %.3e BG %.3e DIRWEI %.3e EWEI %.3e\n" %
+                    (Aul, Ab, GNORM, BG, dirwei, ewei))
+                    sys.exit()
+
+                
+                
         # end of loop over NDIR
         # print("--- tran=%2d   ncmp=%2d  %.3f seconds" % (tran, ncmp, time.time()-t000))
         # print("--- SUM_DIRWEI %8.5f" % SUM_DIRWEI)
@@ -1243,7 +1293,7 @@ def Simulate():
         # print("**** DIRWEI AVERAGE VALUE %8.4f ***" % (dwsum/dwcount))
         # average weight was == 1.000 but this reduced Tex ... the weighting is not ok?
         
-        # @@ for plot_pl.py
+        # for plot_pl.py
         if (0):  # debugging ... see that Update has the same PL as Path
             print("SAVING PL.dat")
             PL.tofile('PL.dat')
@@ -1251,6 +1301,23 @@ def Simulate():
             PL.tofile('PL_zero.dat')
             sys.exit()
 
+            
+        if (0):
+            cl.enqueue_copy(queue, WRK, RES_buf)   #  WRK[CELLS, 2],    RES[CELLS, 2] for ALI
+            print()
+            asarray(WRK[:,0],float32).tofile('nol.sij')
+            print("RAW nol.sij WRITTED !!")
+            ####
+            print('NRAY %d, GLOBAL %d, niter %d' % (NRAY, GLOBAL, niter))
+            print("PLWEIGHT %d, APL %.3e PL %.3e %.3e" % (PLWEIGHT, APL, np.mean(PL), np.std(PL)))
+            print("# NOL SIJ   =====>  ", np.mean(WRK[:,0]))
+            print("# NOL ESC   =====>  ", np.mean(WRK[:,1]))
+            clf()
+            plot(WRK[:,0], 'k.')
+            plot(WRK[:,1], 'c.')
+            # show(block=True)
+            sys.exit()
+            
 
         # PLWEIGHT
         # - OCTREE=0 -- PLWEIGHT can be 1 (for testing). Update kernel can take PL_buf but only for testing
@@ -1264,9 +1331,9 @@ def Simulate():
                 SIJ_ARRAY[:, tran]                    =  WRK[:,0]  
                 ESC_ARRAY[:, tran]                    =  WRK[:,1]
             else:
-                if (OCTREE==0):   # regular Cartesian but PLWEIGHT=1 ==> use PL weighting
-                    SIJ_ARRAY[:, tran]                =  WRK[:,0] * APL/PL[:]
-                    ESC_ARRAY[:, tran]                =  WRK[:,1] * APL/PL[:]
+                if (OCTREE==0):   # regular Cartesian but PLWEIGHT=1 => use PL weighting
+                    SIJ_ARRAY[:, tran]                =  WRK[:,0] #* APL/PL[:]
+                    ESC_ARRAY[:, tran]                =  WRK[:,1] #* APL/PL[:]
                 elif (OCTREE in [1,2]):   #  OCTREE=1,2, weight with  (APL/PL) * f(level)
                     a, b  =  0, LCELLS[0]
                     SIJ_ARRAY[a:b, tran]              =  WRK[a:b, 0] * (APL/PL[a:b])
@@ -1301,7 +1368,7 @@ def Simulate():
             if (PLWEIGHT==0):              # PLWEIGHT==0 implies OCTREE=0, Cartesian grid without PL weighting
                 SIJ_ARRAY[:, tran]                    =  WRK[0,:]
             else:
-                if (OCTREE==0):            # Cartesian grid with PL weihgting
+                if (OCTREE==0):            # Cartesian grid with PL weighting
                     SIJ_ARRAY[:, tran]                =  WRK[0,:]  * APL/PL[:]
                 elif (OCTREE in [1,2]):    #  OCTREE=1,2, weight with  (APL/PL) * f(level)
                     a, b                              =  0, LCELLS[0]
@@ -1333,8 +1400,6 @@ def Simulate():
                             SIJ_ARRAY[a:b, tran]      =  WRK[0, a:b] ### / (2.0**l)
             WRK.shape = (CELLS, 2)
                         
-                        
-                            
         m = nonzero(RHO>0.0)
         if (WITH_ALI>0):
             if (INI['verbose']>1):
@@ -1344,7 +1409,7 @@ def Simulate():
             if (0): sys.exit()
             
             
-        if (1):
+        if (0):
             m1  =  nonzero(~isfinite(SIJ_ARRAY[m[0],0]))
             # m1  =  ([6083,],)
             # m1  =  ([5083,],)
@@ -1356,20 +1421,22 @@ def Simulate():
                 print('ABU  ',       ABU[m[0]][m1[0]])
                 if (len(m1[0])>0): sys.exit()
             
-        if (tran==-1):
+        if (0):
             clf()
             ax = axes()
             m = nonzero(RHO>0.0)
+            print("============ tran=0 ==========")
+            print("<APL/PL> = %.4f" % (APL/np.mean(PL)))
             print("CELLS %d" % len(m[0]))
             print("SIJ_ARRAY[%d] " % tran,  percentile(SIJ_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
             plot(SIJ_ARRAY[m[0],tran], 'r.')
-            text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]), std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])), transform=ax.transAxes, color='r', size=15)
+            text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]), std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])), transform=ax.transAxes, color='m', size=15)
             if (WITH_ALI>0):
                 print("ESC_ARRAY[%d] " % tran,  percentile(ESC_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
                 plot(ESC_ARRAY[m[0],tran], 'b.')
-                text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(ESC_ARRAY[m[0],tran]), std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])), transform=ax.transAxes, color='b', size=15)
+                text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(ESC_ARRAY[m[0],tran]), std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])), transform=ax.transAxes, color='c', size=15)
             title("SIJ and ESC directly from kernel")
-            show()
+            # show(block=True)
             sys.exit()
 
         if (0):
@@ -1410,6 +1477,7 @@ def Simulate():
         if (0):
             print("       tran = %3d  = %2d - %2d  => <SIJ> = %.3e   <ESC> = %.3e" % 
             (tran, upper, lower, mean(WRK[:,0]), mean(WRK[:,1])))
+            
     if (INI['verbose']<2):
         sys.stdout.write('\n')
 
@@ -1427,9 +1495,7 @@ def Simulate():
         plot(8.0*SIJ_ARRAY[OFF[1]:(OFF[1]+LCELLS[1]), 1], 'rx')
         show()
         sys.exit()
-            
-        
-    
+                    
     
     if (0):
         print("------------------------------------------------------------------------------------------")
@@ -1449,6 +1515,8 @@ def Simulate():
             
             
     # <--- for tran ---
+    
+    
     if (COOLING==2):
         print("BRUTE COOLING: %10.3e" % (sum(SUM_COOL)/CELLS))
         fpb = open('brute.cooling', 'wb')
@@ -1486,14 +1554,316 @@ def Cooling():
     fp.close()
 
     
+
     
     
+def SimulateOL():
+    # General line overlap, simulate only the bands of overlapping lines
+    global INI, MOL, queue, context, LOCAL, GLOBAL, WIDTH, VOLUME, GL, NSIDE
+    global GAU_buf, CLOUD_buf, LIM_buf, PL, EWEI, PL_buf
+    global PACKETS, OLBAND, MAXCMP, MAXCHN
+    print("***** SimulateOL *****")
+    
+    tmp_1   =  C_LIGHT*C_LIGHT/(8.0*pi)
+    Tbg     =  INI['Tbg']
+    if (INI['verbose']<2):  sys.stdout.write('      ')
+    niter   =  0
+    
+    Aul_buf      =  cl.Buffer(context, mf.READ_ONLY,  4 * MAXCMP)
+    Ab_buf       =  cl.Buffer(context, mf.READ_ONLY,  4 * MAXCMP)
+    OL_OFF_buf   =  cl.Buffer(context, mf.READ_ONLY,  4 * MAXCMP)
+    OL_NI_buf    =  cl.Buffer(context, mf.READ_ONLY, 4 * 2*MAXCMP*CELLS)  #   OL_NI[2, NCMP,CELLS] = { nu, nbnb }
+    OL_RES_buf   =  cl.Buffer(context, mf.READ_WRITE, 4 * 2*MAXCMP*CELLS) #  OL_RES[2, NCMP,CELLS] = { sij, esc }
+
+    print("GLOBAL %d, MAXCHN %d" % (GLOBAL, MAXCHN))
+    OL_NTRUE_buf =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #  NTRUE[GLOBAL, MAXCHN]
+    OL_TAU_buf   =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #    TAU[GLOBAL, MAXCHN]
+    OL_EMIT_buf  =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #   EMIT[GLOBAL, MAXCHN]
+    OL_TT_buf    =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #     TT[GLOBAL, MAXCHN]
+    
+    
+    for iband in range(OLBAND.BANDS):
+        
+        t_tran        =  time.time()
+        NCMP          =  OLBAND.NCMP[iband]  # number of transitions within this band
+        NCHN          =  OLBAND.NCHN[iband]  # number of channels in the band
+        TRAN          =  OLBAND.TRAN[iband]  # transitions in this band
+        COFF          =  OLBAND.COFF[iband]  # offsets in channels for each transition
+
+        print("SimulateOL  band = %d  -- " % iband, "   TRAN = ", TRAN)
+        assert(len(COFF)<=MAXCMP)
+        Aul           =  zeros(NCMP, float32)
+        Ab            =  zeros(NCMP, float32)
+        GG            =  zeros(NCMP, float32)
+        BG            =  1.0
+        
+        for icmp in range(NCMP):
+            tran          =  TRAN[icmp]
+            # upper, lower  =  MOL.T2L(tran)
+            Aul[icmp]     =  MOL.A[tran]
+            Ab[ icmp]     =  MOL.BB[tran]
+            GG[ icmp]     =  MOL.GG[tran]
+            # print("icmp=%d    Aul=%10.3e  Ab=%10.3e  GG=%10.3e  COFF=%d" % (icmp, Aul[icmp], Ab[icmp], GG[icmp], COFF[icmp])) ;
+            
+        cl.enqueue_copy(queue, Aul_buf,    Aul)
+        cl.enqueue_copy(queue, Ab_buf,     Ab)
+        cl.enqueue_copy(queue, OL_OFF_buf, COFF)
+            
+        freq      =  0.5*(OLBAND.FMIN[iband]+OLBAND.FMAX[iband])
+        freq      =  MOL.F[TRAN[0]]
+        
+        BGPHOT    =  Planck(freq, Tbg)* 1.74080   /  (PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
+        GN        = (C_LIGHT/(1.0e5*WIDTH*freq)) * GL  # GRID_LENGTH multiplied to gauss norm
+        if (INI['verbose']<2):
+             sys.stdout.write(' %2d' % tran)
+             sys.stdout.flush()
+             
+        # kernel_clear(queue, [GLOBAL,], [LOCAL,], RES_buf)
+        OL_WRK = zeros((2, NCMP, CELLS), float32)
+        cl.enqueue_copy(queue, OL_RES_buf, OL_WRK)  # RES[2,NCMP,CELLS]
+        assert(CELLS==(NI_ARRAY.shape[0]))
+        
+        # Upload NI[upper] and NB_NB[tran] values  NI_buf ~ [2, NCMP, CELLS]
+        for icmp in range(NCMP):
+            tran          =  TRAN[icmp]
+            upper, lower  =  MOL.T2L(tran)
+            freq          =  MOL.F[tran]
+            tmp           =  tmp_1 * Aul[icmp] * (NI_ARRAY[:,lower]*GG[icmp]-NI_ARRAY[:,upper]) / (freq*freq)  # [CELLS]
+            tmp           =  np.clip(tmp, 1.0e-25, 1.0e32)        # KILL ALL MASERS  $$$
+            OL_WRK[0,icmp,:] =  NI_ARRAY[:, upper]   # ni
+            OL_WRK[1,icmp,:] =  tmp                  # nb_nb
+        cl.enqueue_copy(queue, OL_NI_buf, OL_WRK)    # OL_NI_buf [2, NCMP, CELLS]
+        offs  =  INI['offsets']  # default was 1, one ray per cell
+        t000  =  time.time()
+
+        if (0):
+            print("  A_b     %12.4e" % Ab[0])
+            print("  GL      %12.4e" % GL)
+            print("  GN      %12.4e" % GN)
+            print("  Aul     %12.4e" % Aul[0])
+            print("  freq    %12.4e" % freq)
+            print("  gg      %12.4e" % GG[0])
+            print("  BGPHOT  %12.4e" % BGPHOT)
+            print("  PACKETS %d"     % PACKETS)
+            print("  BG      %12.4e" % Planck(freq, Tbg))
+            print("  NI      %12.4e" % (np.mean(OL_WRK[0,0,:])))
+            print("  NBNB    %12.4e" % (np.mean(OL_WRK[1,0,:])))
+        
+        
+        
+        SUM_DIRWEI = 0.0   # weight ~ cos(theta)/sum(cos(theta)) ... should sum to 1.0 for each side, 6.0 total
+        
+        for idir in range(NDIR):            
+            inner_loop = 4*offs*offs
+            if (ONESHOT): inner_loop = 1    # for  OCTREE=4, OCTREE=40
+            for ioff in range(inner_loop):  # 4 staggered initial positions over 2x2 cells -- if ONESHOT==0
+                                
+                POS, DIR, LEADING  =  GetHealpixDirection(NSIDE, ioff, idir, NX, NY, NZ, offs, DOUBLE_POS) # < 0.001 seconds !
+                dirwei, ewei = 1.0, 1.0
+                # 2021-01-13 --- BGPHOT * cos(theta)/DIRWEI, DIRWEI = sum(cos(theta)) for each side separately
+                # there is no change at this point, except that DIRWEI is sum, not the average cos(theta)
+                # *AND* BG is computed without dependence on the PACKETS variable
+                if (LEADING in   [0, 1]):    
+                    dirwei   =  fabs(DIR['x']) / DIRWEI[LEADING]   # cos(theta)/<cos(theta)>
+                    ewei     =  float32(EWEI / abs(DIR['x']))      # (1/cosT) / <1/cosT> / NDIR ... not used !!
+                elif (LEADING in [2, 3]):  
+                    dirwei   =  fabs(DIR['y']) / DIRWEI[LEADING]
+                    ewei     =  float32(EWEI / abs(DIR['y']))
+                else:                     
+                    dirwei   =  fabs(DIR['z']) / DIRWEI[LEADING]
+                    ewei     =  float32(EWEI / abs(DIR['z']))                    
+                BG           =  BGPHOT * dirwei
+                SUM_DIRWEI  +=  dirwei
+                dirwei = 1.0        # this is the weight factor that goes to kernel... now not used
+                niter  = NRAY//GLOBAL
+                if (NRAY%GLOBAL!=0):  niter += 1                
+                for ibatch in range(niter):
+                    # print("    ibatch %d" % ibatch)
+                    kernel_sim_ol(queue, [GLOBAL,], [LOCAL,],
+                    # 0     1     2         3        4   5           6                7                   
+                    # NCMP  NCHN  Aul[NCMP] Ab[NCMP] GN  COFF[NCMP]  NI[2,NCMP,CELLS] NTRUE[GLOBAL,MAXCHN]
+                    NCMP,   NCHN, Aul_buf,  Ab_buf,  GN, OL_OFF_buf, OL_NI_buf,       OL_NTRUE_buf,
+                    # 8            9           10                 11        12        13        14
+                    # id0          CLOUD       GAU[GNO,CHANNELS]  LIM[GNO]  PL        APL       BG
+                    ibatch*GLOBAL, CLOUD_buf,  GAU_buf,           LIM_buf,  PL_buf,   APL,      BG,
+                    # 15        16      17         18      19     20                 
+                    # DIRWEI    EWEI    LEADING    POS0    DIR    RES[2, NCMP, CELLS]
+                    dirwei,     ewei,   LEADING,   POS,    DIR,   OL_RES_buf,
+                    # 21                    22                    23                
+                    # TAU[GLOBAL, MAXCHN],  EMIT[GLOBAL, MAXCHN]  TT[GLOBAL, MAXCHN]
+                    OL_TAU_buf,             OL_EMIT_buf,          OL_TT_buf)
+                    ###
+                queue.finish()
+
+                if (0):
+                    print()
+                    print("OL  HOST: Aul %.3e Ab %.3e GN %.3e BG %.3e DIRWEI %.3e EWEI %.3e\n" %
+                    (Aul, Ab, GN, BG, dirwei, ewei))
+                    sys.exit()
+                
+                    
+                    
+        if (0):  # debugging ... see that Update has the same PL as Path
+            print("SAVING PL.dat")
+            PL.tofile('PL.dat')
+            cl.enqueue_copy(queue, PL, PL_buf)
+            PL.tofile('PL_zero.dat')
+            sys.exit()
+                    
+                
+        if (0):
+            print()
+            cl.enqueue_copy(queue, OL_WRK, OL_RES_buf)   # WRK[2, NCMP, CELLS]
+            asarray(OL_WRK[0,0,:], float32).tofile('ol.sij')
+            print("RAW nol.sij WRITTED !!")
+            print('NRAY %d, GLOBAL %d, niter %d' % (NRAY, GLOBAL, niter))            
+            print("PLWEIGHT %d, APL %.3e PL %.3e %.3e" % (PLWEIGHT, APL, np.mean(PL), np.std(PL)))
+            print("#  OL SIJ   =====>  ", np.mean(OL_WRK[0,0,:]))
+            print("#  OL ESC   =====>  ", np.mean(OL_WRK[1,0,:]))
+            clf()
+            plot(OL_WRK[0,0,:], 'k.')
+            plot(WRK[:,1], 'c.')
+            # show(block=True)
+            sys.exit()
+            
+                
+        # PLWEIGHT
+        # - OCTREE=0 -- PLWEIGHT can be 1 (for testing). Update kernel can take PL_buf but only for testing
+        #   and we do not use PL here.
+        # - OCTREE>0, we assume PL is calculated and it is not used only for OCTREE=4, if INI['plweight']==0
+        # post weighting
+        if (WITH_ALI>0):
+            cl.enqueue_copy(queue, OL_WRK, OL_RES_buf)       # SIJ and ESC, RES[NCMP,CELLS,2] => OL_WRK[2,NCMP,CELLS]
+            if (0):
+                m0 = nonzero(~isfinite(OL_WRK[0,:,:]))       # WRK[2, NCMP, CELLS]
+                m1 = nonzero(~isfinite(OL_WRK[1,:,:]))
+                tmp = zeros((NCMP, CELLS), int32)
+                tmp[m0] = 1
+                print("NOT FINITE:  SIJ %d,  ESC %d" %(len(m0[0]), len(m1[0])))
+                if (0):
+                    clf()
+                    for i in range(NCMP):
+                        subplot(3,3,1+i)
+                        plot(tmp[i,:])
+                    show(block=True)
+                    sys.exit()
+            if (PLWEIGHT==0):    # assume PLWEIGHT implies OCTREE==0
+                #  Cartesian grid -- no PL weighting, no cell-volume weighting
+                assert(1==0)
+                for icmp in range(NCMP):
+                    tran = TRAN[icmp]
+                    SIJ_ARRAY[:, tran]          =  OL_WRK[0,icmp,:]  
+                    ESC_ARRAY[:, tran]          =  OL_WRK[1,icmp,:]
+            else:
+                if (OCTREE==0):   # regular Cartesian but PLWEIGHT=1 ==> use PL weighting
+                    for icmp in range(NCMP):
+                        tran = TRAN[icmp]
+                        print("icmp %d, tran %d" % (icmp, tran))
+                        SIJ_ARRAY[:, tran]            =  OL_WRK[0,icmp,:] #* APL/PL[:]
+                        ESC_ARRAY[:, tran]            =  OL_WRK[1,icmp,:] #* APL/PL[:]
+                elif (OCTREE in [1,2]):   #  OCTREE=1,2, weight with  (APL/PL) * f(level)
+                    for icmp in range(NCMP):
+                        tran = TRAN[icmp]
+                        a, b  =  0, LCELLS[0]
+                        SIJ_ARRAY[a:b, tran]          =  OL_WRK[0,icmp,a:b] * (APL/PL[a:b])
+                        ESC_ARRAY[a:b, tran]          =  OL_WRK[1,icmp,a:b] * (APL/PL[a:b])
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]                    
+                            if (OCTREE==1):         k =  8.0**l  # OCTREE1   PL should be  APL/8^l
+                            else:                   k =  2.0**l  # OCTREE2   PL should be  APL/2^l
+                            SIJ_ARRAY[a:b, tran]      =  OL_WRK[0,icmp,a:b] * (1.0/k)  * (APL/PL[a:b])
+                            ESC_ARRAY[a:b, tran]      =  OL_WRK[1,icmp,a:b] * (1.0/k)  * (APL/PL[a:b])
+                else:  # OCTREE 3,4,5,40   --- assuming  it should be  PL[] == APL/2^l ;
+                    if (PLWEIGHT):
+                        a, b                          =  0, LCELLS[0]
+                        for icmp in range(NCMP):
+                            tran = TRAN[icmp]
+                            SIJ_ARRAY[a:b, tran]      =  OL_WRK[0,icmp,a:b] * APL/PL[a:b] 
+                            ESC_ARRAY[a:b, tran]      =  OL_WRK[1,icmp,a:b] * APL/PL[a:b]
+                            for l in range(1, OTL):
+                                a, b                  =  OFF[l], OFF[l]+LCELLS[l]                    
+                                SIJ_ARRAY[a:b, tran]  =  OL_WRK[0,icmp,a:b] * (APL/2.0**l) /  PL[a:b]
+                                ESC_ARRAY[a:b, tran]  =  OL_WRK[1,icmp,a:b] * (APL/2.0**l) /  PL[a:b]
+                    else:  # if we rely on PL being correct ~ 0.5^level
+                        # above scaling  APL/2**l/PL translates to 1.0 
+                        a, b                          =  0, LCELLS[0]
+                        for icmp in range(NCMP):
+                            tran = TRAN[icmp]
+                            SIJ_ARRAY[a:b, tran]      =  OL_WRK[0,icmp,a:b]
+                            ESC_ARRAY[a:b, tran]      =  OL_WRK[1,icmp,a:b]
+                            for l in range(1, OTL):
+                                a, b                  =  OFF[l], OFF[l]+LCELLS[l]                    
+                                SIJ_ARRAY[a:b, tran]  =  OL_WRK[0,icmp,a:b]
+                                ESC_ARRAY[a:b, tran]  =  OL_WRK[1,icmp,a:b]
+                                
+                            
+            if (0):
+                tran = 0
+                print("============ tran=0 =============")
+                print("<APL/PL> = %.4f" % (APL/np.mean(PL)))
+                clf()
+                ax = axes()
+                m = nonzero(RHO>0.0)
+                print("CELLS %d" % len(m[0]))
+                print("SIJ_ARRAY[%d] " % tran,  percentile(SIJ_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
+                plot(SIJ_ARRAY[m[0],tran], 'r.')
+                text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]), std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])), transform=ax.transAxes, color='m', size=15)
+                if (WITH_ALI>0):
+                    print("ESC_ARRAY[%d] " % tran,  percentile(ESC_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
+                    plot(ESC_ARRAY[m[0],tran], 'b.')
+                    text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(ESC_ARRAY[m[0],tran]), std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])), transform=ax.transAxes, color='c', size=15)
+                title("SIJ and ESC directly from kernel")
+                # show(block=True)
+                sys.exit()
+                                
+        else:  # no ALI, SIJ only
+            assert(0==1)
+                                                                            
+        m = nonzero(RHO>0.0)
+        if (WITH_ALI>0):
+            if (INI['verbose']>1):
+                print("      TRANSITION %2d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
+                (tran, mean(SIJ_ARRAY[m[0],tran]), mean(ESC_ARRAY[m[0],tran]), time.time()-t_tran))
+            
+        if (0):
+            m1  =  nonzero(~isfinite(SIJ_ARRAY[m[0],0]))
+            if (len(m1[0])>0):
+                print("\nSIJ NOT FINITE:", len(m1[0]))
+                print('SIJ  ', SIJ_ARRAY[m[0],0][m1[0]])
+                print('RHO  ',       RHO[m[0]][m1[0]])
+                print('TKIN ',      TKIN[m[0]][m1[0]])
+                print('ABU  ',       ABU[m[0]][m1[0]])
+                if (len(m1[0])>0): sys.exit()
+            
+    if (INI['verbose']<2):
+        sys.stdout.write('\n')
+
+        
+    if (0):
+        asarray(SIJ_ARRAY[:,0], float32).tofile('ol.sij')
+        # sys.exit()
+          
+    del Aul_buf
+    del Ab_buf
+    del OL_NI_buf
+    del OL_NTRUE_buf
+    del OL_RES_buf
+    del OL_TAU_buf
+    del OL_TT_buf
+    del OL_WRK
+
+        
+        
+        
+        
+    
+
 def Solve(CELLS, MOL, INI, LEVELS, TKIN, RHO, ABU, ESC_ARRAY):
     NI_LIMIT  =  1.0e-28
-    CHECK     = min([INI['uppermost']+1, LEVELS])  # check this many lowest energylevels
-    cab       = ones(10, float32)                  # scalar abundances of different collision partners
+    CHECK     =  min([INI['uppermost']+1, LEVELS])  # check this many lowest energylevels
+    cab       =  ones(10, float32)                  # scalar abundances of different collision partners
     for i in range(PARTNERS):
-        cab[i] = MOL.CABU[i]                       # default values == 1.0
+        cab[i] = MOL.CABU[i]                        # default values == 1.0
     # possible abundance file for abundances of all collisional partners
     CABFP = None
     if (len(INI['cabfile'])>0): # we have a file with abundances of each collisional partner
@@ -1542,9 +1912,6 @@ def Solve(CELLS, MOL, INI, LEVELS, TKIN, RHO, ABU, ESC_ARRAY):
         if (rho<1.0e-2):  continue
         if (chi<1.0e-20): continue
         
-        #print("rho = %.3e" % rho)
-        #rho = 1.0e-5
-        
         if (constant_tkin):
             MATRIX[:,:] = COMATRIX[:,:] * rho 
         else:
@@ -1568,6 +1935,7 @@ def Solve(CELLS, MOL, INI, LEVELS, TKIN, RHO, ABU, ESC_ARRAY):
                             for ip in range(PARTNERS):
                                 gamma += cab[ip] * MOL.C(iii, jjj, tkin, ip)
                             MATRIX[jjj, iii] = gamma*rho
+                            
         if (len(ESC_ARRAY)>1):
             MATRIX[ll,uu]    +=  ESC_ARRAY[icell, :] / (VOLUME*NI_ARRAY[icell, uu])
         else:
@@ -1575,23 +1943,40 @@ def Solve(CELLS, MOL, INI, LEVELS, TKIN, RHO, ABU, ESC_ARRAY):
                 u,l           =  MOL.T2L(t)
                 MATRIX[l,u]  +=  MOL.A[t]
 
+                                
         #   X[l,u] = Aul + Bul*I       =  Aul + Blu*gl/gu*I = Aul + Slu/GG
         #   X[u,l] = Blu = Bul*gu/gl
         
         MATRIX[uu, ll]    +=  SIJ_ARRAY[icell, :] /  VOLUME
         MATRIX[ll, uu]    +=  SIJ_ARRAY[icell, :] / (VOLUME * MOL.GG[:])
 
+                    
         for u in range(LEVELS-1): # diagonal = -sum of the column
             tmp            = sum(MATRIX[:,u])    # MATRIX[i,i] was still == 0
             MATRIX[u,u]    = -tmp
             
         MATRIX[LEVELS-1, :]   =  -MATRIX[0,0]    # replace last equation = last row
+        
+                
         VECTOR[:]             =   0.0
         VECTOR[LEVELS-1]      =  -(rho*chi) * MATRIX[0,0]  # ???
 
+        
         VECTOR  =  np.linalg.solve(MATRIX, VECTOR)        
         VECTOR  =  np.clip(VECTOR, NI_LIMIT, 1e99)
         VECTOR *=  rho*chi / sum(VECTOR)        
+        
+        if (0): #@@
+            if (icell==9310):
+                print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
+                print("MATRIX\n")
+                print(MATRIX)
+                asarray(MATRIX,float32).tofile('matrix.bin')
+                print("VECTOR\n")
+                print(VECTOR)
+                print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
+                            
+        
         
         if (0):
             print("F= %12.4e  Gu = %.3f  Gl = %3f" % (MOL.F[0], MOL.G[1], MOL.G[0]))
@@ -1655,9 +2040,10 @@ def SolveCL():
     res   = zeros((BATCH, LEVELS), float32)
     ave_max_change     = 0.0
     global_max_change  = 0.0
+
     
     if (OCTREE>0):
-        # follow_ind = 6083
+        # follow_ind = 13965
         follow_ind =   -1
         for ilevel in range(OTL):
             # print("OCTREE LEVEL %d" % ilevel)
@@ -1763,7 +2149,7 @@ def SolveCL():
             if (batch<1): break  #   division CELLS//BATCH went even...
             #print(" SolveCL, batch %5d,  [%7d, %7d[,  %4d cells, BATCH %4d" % (ibatch, a, b, batch, BATCH))
             # copy RHO, TKIN, ABU
-            cl.enqueue_copy(queue, SOL_RHO_buf,  RHO[a:b].copy())  # without copy() "ndarray is not contiguous"
+            cl.enqueue_copy(queue, SOL_RHO_buf,  RHO[a:b].copy())
             cl.enqueue_copy(queue, SOL_TKIN_buf, TKIN[a:b].copy())
             cl.enqueue_copy(queue, SOL_ABU_buf,  ABU[a:b].copy())
             cl.enqueue_copy(queue, SOL_NI_buf,   NI_ARRAY[a:b,:].copy())   # PL[CELLS] ~ NI[BATCH, LEVELS]
@@ -1815,7 +2201,7 @@ def WriteSpectra(INI, u, l):
     else:
         nchn    =  CHANNELS     #  it is the original INI['channels']
         ncmp    =  1
-    print("*** WriteSpectra(%d, %d), ncmp=%d, nchn=%d, TAUSAVE %d" % (u, l, ncmp, nchn, TAUSAVE))
+    # print("*** WriteSpectra(%d, %d), ncmp=%d, nchn=%d, TAUSAVE %d" % (u, l, ncmp, nchn, TAUSAVE))
     Aul         =  MOL.A[tran]
     freq        =  MOL.F[tran]
     gg          =  MOL.G[u]/MOL.G[l]
@@ -1827,26 +2213,26 @@ def WriteSpectra(INI, u, l):
     for iview in range(NVIEW):
         
         # dimensions, direction, centre -- now all in INI['mapview']
-        print('*** MAPVIEW ', INI['mapview'][iview])
+        # print('*** MAPVIEW ', INI['mapview'][iview])
         theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
         NRA, NDE    = int(NRA), int(NDE)                               # 2021-07-14 - map dimensions
         DE          =  0.0    
         GLOBAL      =  IRound(NRA, LOCAL)    
         STEP        =  INI['grid'] / INI['angle']
         emissivity  =  (PLANCK/(4.0*pi))*freq*Aul*int2temp    
-        direction   =  cl.cltypes.make_float2()
+        direction   =  cl.cltypes.make_float2(0.0, 0.0)
         direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
-        centre       =  cl.cltypes.make_float3()
+        
+        centre       =  cl.cltypes.make_float3(0.0, 0.0, 0.0)
         centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
         if (isfinite(xc*yc*zc)):                                      # 2021-07-14 - map centre given by user
             centre['x'], centre['y'], centre['z']  =   xc, yc, zc
-        print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
-
+        # print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
         if (ncmp>1): # note -- GAU is for CHANNELS channels
             for i in range(ncmp):
                 HF[i]['x']  =  round(BAND[tran].VELOCITY[i]/WIDTH) # offset in channels (from centre of the spectrum)
                 HF[i]['y']  =  BAND[tran].WEIGHT[i]
-                print("       offset  %5.2f channels, weight %5.3f" % (HF[i]['x'], HF[i]['y']))
+                # print("       offset  %5.2f channels, weight %5.3f" % (HF[i]['x'], HF[i]['y']))
             HF[0:ncmp]['y']  /= sum(HF[0:ncmp]['y'])
             cl.enqueue_copy(queue, HF_buf, HF)
     
@@ -1861,7 +2247,7 @@ def WriteSpectra(INI, u, l):
                 #                                 CLOUD GAU   LIM   GN          D                  NI  
                 #                                 0     1     2     3           4                  5   
                 kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
-                # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU CRT_TAU CRT_EMI
+                # DE        NRA       STEP        BG          emit0       NTRUE SUM_TAU CRT_TAU CRT_EMI
                 # 6         7         8           9           10          11    12      13      14     
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,   None,   None,
                 #  15      16     17     18  
@@ -1874,7 +2260,7 @@ def WriteSpectra(INI, u, l):
                 #                                 CLOUD GAU   LIM   GN          D                  NI  
                 #                                 0     1     2     3           4                  5   
                 kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
-                # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU CRT_TAU CRT_EMI
+                # DE        NRA       STEP        BG          emit0       NTRUE SUM_TAU CRT_TAU CRT_EMI
                 # 6         7         8           9           10          11    12      13      14     
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,   None,   None,
                 # 15      16           
@@ -1885,7 +2271,7 @@ def WriteSpectra(INI, u, l):
                 #                                 CLOUD  GAU   LIM   GN          D                  NI 
                 #                                 0      1     2     3           4                  5  
                 kernel_spe.set_scalar_arg_dtypes([None,  None, None, np.float32, cl.cltypes.float2, None,
-                # DE        NRA       STEP        BG          emis0       NTRUE  SUM_TAU
+                # DE        NRA       STEP        BG          emit0       NTRUE  SUM_TAU
                 # 6         7         8           9           10          11     12    
                 np.float32, np.int32, np.float32, np.float32, np.float32, None,  None,
                 # LCELLS, OFF,  PAR,  RHO,  FOLLOW    CENTRE            
@@ -1897,7 +2283,7 @@ def WriteSpectra(INI, u, l):
                 #                                 CLOUD GAU   LIM   GN          D                  NI 
                 kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
                 # 6         7         8           9           10          11    12       14        15
-                # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU  FOLLOW    CENTRE
+                # DE        NRA       STEP        BG          emit0       NTRUE SUM_TAU  FOLLOW    CENTRE
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,    np.int32, cl.cltypes.float3])
             
         if (ncmp>1):
@@ -1942,7 +2328,7 @@ def WriteSpectra(INI, u, l):
         WRK[:,1]    =  wrk               # nb_nb
         wrk         =  []
         cl.enqueue_copy(queue, NI_buf, WRK)
-
+        
         fptau = None
         if (INI['FITS']==0):
             fp          =  open('%s_%s_%02d-%02d%s.spe' % (INI['prefix'], MOL.NAME, u, l, ['', '.%03d' % iview][NVIEW>1]), 'wb')
@@ -1951,7 +2337,7 @@ def WriteSpectra(INI, u, l):
             if (TAUSAVE>0):            
                 fptau = open('%s_%s_%02d-%02d%s.tau' % (INI['prefix'], MOL.NAME, u, l, ['', '%.03d' % iview][NVIEW>1]), 'wb')
         else:
-            print("MakeEmptyFitsDim... nchn = %d" % nchn)
+            # print("MakeEmptyFitsDim... nchn = %d" % nchn)
             fp    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, nchn)
             if (TAUSAVE>0):
                 fptau =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, nchn)
@@ -2050,6 +2436,159 @@ def WriteSpectra(INI, u, l):
 
         
 
+        
+
+        
+def WriteSpectraOL(INI, OLBAND, iband):
+    # Write spectra for set of overlapping lines => 
+    global MOL, program, queue, WIDTH, LOCAL, NI_ARRAY, WRK, NI_buf, HFS, CHANNELS
+    global HFS, TAUSAVE, LIM_buf
+    global CLOUD_buf, GAU_buf
+    tmp_1       =  C_LIGHT*C_LIGHT/(8.0*pi)
+    NCHN        =  OLBAND.NCHN[iband]
+    f0, f1      =  OLBAND.FMIN[iband], OLBAND.FMAX[iband]
+    # print("CHANNELS = %d   ==>  NCHN = %d" % (CHANNELS, NCHN))
+    freq        =  0.5*(OLBAND.FMIN[iband]+OLBAND.FMAX[iband])
+    GNORM       =  (C_LIGHT/(1.0e5*WIDTH*freq))      #  GRID_LENGTH **NOT** multiplied in    
+    int2temp    =   C_LIGHT*C_LIGHT/(2.0*BOLTZMANN*freq*freq)    
+    BG          =  int2temp * Planck(freq, INI['Tbg'])  # still scalar
+    NVIEW       =  len(INI['mapview'])
+    TRAN        =  asarray(OLBAND.TRAN[iband], int32)
+    NCMP        =  OLBAND.NCMP[iband]
+    COFF        =  asarray(OLBAND.COFF[iband], float32)
+    
+    NRA_MAX     =  0
+    for iview in range(len(INI['mapview'])):    
+        theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
+        NRA_MAX = max([NRA_MAX, int(NRA)])
+    
+    WRK         =  zeros((2, NCMP, CELLS), float32)  # 2*NCMP*CELLS
+    emit0       =  zeros(NCMP, float32)    
+    GNORM       =  zeros(NCMP, float32)
+    tran0       =  TRAN[0]
+    u0, l0      =  MOL.T2L(tran0)
+    for icmp in range(NCMP):
+        tran    =  TRAN[icmp]
+        u, l    =  MOL.T2L(tran)
+        Aul     =  MOL.A[tran]
+        freq    =  MOL.F[tran]        
+        gg      =  MOL.G[u]/MOL.G[l]   
+        WRK[0, icmp, :] = NI_ARRAY[:,u]   #  NI[NCMP, CELLS]
+        wrk     =  (tmp_1 * Aul * (NI_ARRAY[:,l]*gg-NI_ARRAY[:,u])) / (freq*freq)
+        wrk     =  clip(wrk, 1.0e-25, 1e10)          #  KILL ALL MASERS  $$$
+        WRK[1, icmp, :] = wrk             # NBNB[NCMP, CELLS]
+        ##
+        emit0[icmp]  =  (PLANCK/(4.0*pi))*freq*Aul*int2temp
+        ##
+        GNORM[icmp]  =  (C_LIGHT/(1.0e5*WIDTH*freq))
+
+        
+    OL_NI_buf    =  cl.Buffer(context, mf.READ_ONLY,  4* 2*NCMP*CELLS) # NI[NCMP,CELLS]+NBNB[NCMP,CELLS]
+
+    OL_TRAN_buf  =  cl.Buffer(context, mf.READ_ONLY,  4* NCMP)
+    OL_COFF_buf  =  cl.Buffer(context, mf.READ_ONLY,  4* NCMP)
+    OL_TAU_buf   =  cl.Buffer(context, mf.READ_WRITE, 4* NRA_MAX*NCHN) 
+    OL_EMIT_buf  =  cl.Buffer(context, mf.READ_WRITE, 4* NRA_MAX*NCHN) 
+
+    OL_NTRUE_buf =  cl.Buffer(context, mf.READ_WRITE, 4* NRA_MAX*NCHN) 
+    OL_STAU_buf  =  cl.Buffer(context, mf.READ_WRITE, 4* NRA_MAX*NCHN) 
+    OL_TT_buf    =  cl.Buffer(context, mf.READ_WRITE, 4* NRA_MAX*NCHN)
+
+    OL_EMIT0_buf =  cl.Buffer(context, mf.READ_ONLY,  4* NCMP)
+    GN_buf       =  cl.Buffer(context, mf.READ_ONLY,  4* GNO)    
+    cl.enqueue_copy(queue, GN_buf,       GNORM)
+    cl.enqueue_copy(queue, OL_NI_buf,    WRK)
+    cl.enqueue_copy(queue, OL_EMIT0_buf, emit0)
+    cl.enqueue_copy(queue, OL_TRAN_buf,  TRAN)
+    cl.enqueue_copy(queue, OL_COFF_buf,  COFF)
+    WRK = []
+    
+    kernel_spe_ol  = program.SpectraOL
+    if (OCTREE==0):
+        kernel_spe_ol.set_scalar_arg_dtypes(
+        # NCMP       NCHN         TRAN   COFF   TAU_ARRAY  EMIT_array
+        [ np.int32,  np.int32,    None,  None,  None,      None,
+        # CLOUD  GAU    LIM    GN     D                  NI
+        None,    None,  None,  None,  cl.cltypes.float2, None,
+        #  DE       NRA       STEP        BG          emit0
+        np.float32, np.int32, np.float32, np.float32, None,
+        # NTRUE STAU   TT    CENTRE
+        None,    None, None, cl.cltypes.float3])
+    else:
+        kernel_spe_ol.set_scalar_arg_dtypes(
+        [ np.int32,  np.int32, None, None, None, None,
+        None, None, None, None, cl.cltypes.float2, None,
+        np.float32, np.int32, np.float32, np.float32, None,
+        None, None, None,
+        None, None, None, None,
+        np.int32, cl.cltypes.float3])
+
+        
+        
+    for iview in range(NVIEW):
+        
+        # dimensions, direction, centre -- now all in INI['mapview']
+        # print('*** MAPVIEW ', INI['mapview'][iview])
+        theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
+        NRA, NDE    =  int(NRA), int(NDE)                               # 2021-07-14 - map dimensions
+        NTRUE       =  zeros((NRA, NCHN), float32)        
+        DE          =  0.0    
+        GLOBAL      =  IRound(NRA, LOCAL)    
+        STEP        =  INI['grid'] / INI['angle']
+        direction   =  cl.cltypes.make_float2(0.0, 0.0)
+        direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
+        centre       =  cl.cltypes.make_float3(0.0, 0.0, 0.0)
+        centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
+        if (isfinite(xc*yc*zc)):                                      # 2021-07-14 - map centre given by user
+            centre['x'], centre['y'], centre['z']  =   xc, yc, zc
+        # print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
+        # print("MakeEmptyFitsDim... nchn = %d" % NCHN)
+        fp    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, NCHN)
+        if (TAUSAVE>0):
+            fptau =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, NCHN)
+        ###
+        ANGLE       =  INI['angle']
+        ave_tau     =  0.0
+        tau         =  zeros(NRA, float32)
+        for de in range(NDE):
+            DE      =  de-0.5*(NDE-1.0)
+            # print("DE %d/%d" % (de, NDE))
+            if (OCTREE==0):
+                # print("OL, OCTREE==0   GLOBAL %d  LOCAL %d" % (GLOBAL, LOCAL))
+                kernel_spe_ol(queue, [GLOBAL,], [LOCAL,],
+                NCMP, NCHN,    OL_TRAN_buf, OL_COFF_buf, OL_TAU_buf, OL_EMIT_buf,
+                CLOUD_buf, GAU_buf, LIM_buf, GN_buf, direction, OL_NI_buf, 
+                DE, NRA, STEP, BG, OL_EMIT0_buf, 
+                OL_NTRUE_buf, OL_STAU_buf, OL_TT_buf, centre)
+            elif (OCTREE==4):
+                # print("OL, OCTREE==1   GLOBAL %d  LOCAL %d" % (GLOBAL, LOCAL))
+                kernel_spe_ol(queue, [GLOBAL,], [LOCAL,],
+                NCMP, NCHN,    OL_TRAN_buf, OL_COFF_buf, OL_TAU_buf, OL_EMIT_buf,
+                CLOUD_buf, GAU_buf, LIM_buf, GN_buf, direction, OL_NI_buf, 
+                DE, NRA, STEP, BG, OL_EMIT0_buf, 
+                OL_NTRUE_buf, OL_STAU_buf, OL_TT_buf, centre,
+                LCELLS_buf, OFF_buf, PAR_buf, RHO_buf)                
+            # NTRUE[NRA, NCHN]
+            queue.finish()
+            # print("*** KERNEL DONE ***")
+            cl.enqueue_copy(queue, NTRUE, OL_NTRUE_buf)  # NTRUE is only nchn channels, kernel uses nchn channels
+            WWW  = sum(NTRUE, axis=1)
+            ira  = argmax(WWW)
+            for ra in range(NRA):
+                fp[0].data[:, de, ra]  =  NTRUE[ra, :]   #  NTRUE[NRA, nchn],  fp[nchn, NDE, NRA]
+            if (TAUSAVE):  # save optical depth
+                cl.enqueue_copy(queue, NTRUE, OL_STAU_buf)
+                for ra in range(NRA):
+                    fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
+        # --- for de
+        fp.writeto('OL_%s_%s_%02d-%02d%s.fits'        % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
+        if (TAUSAVE):
+            fptau.writeto('%s_%s_%02d-%02d_tau%s.fits' % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
+            del fptau
+        print("  SPECTRUM %3d  = %2d -> %2d,  <tau_peak> = %.3e" % (tran0, u0, l0, ave_tau/(NRA*NDE)))
+
+        
+        
     
 
         
@@ -2111,9 +2650,9 @@ def WriteLOSSpectrum(INI, u, l):
         GLOBAL      =  LOCAL     # single work item used
         STEP        =  INI['grid'] / INI['angle']
         emissivity  =  (PLANCK/(4.0*pi))*freq*Aul*int2temp    
-        direction   =  cl.cltypes.make_float2()
+        direction   =  cl.cltypes.make_float2(0.0,0.0)
         direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
-        centre       =  cl.cltypes.make_float3()
+        centre       =  cl.cltypes.make_float3(0.0,0.0,0.0)
         centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
         if (isfinite(xc*yc*zc)):                                      # 2021-07-14 - map centre given by user
             centre['x'], centre['y'], centre['z']  =   xc, yc, zc
@@ -2140,7 +2679,7 @@ def WriteLOSSpectrum(INI, u, l):
                 #                                 CLOUD GAU   LIM   GN          D                  NI  
                 #                                 0     1     2     3           4                  5   
                 kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
-                # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU CRT_TAU CRT_EMI
+                # DE        NRA       STEP        BG          emit0       NTRUE SUM_TAU CRT_TAU CRT_EMI
                 # 6         7         8           9           10          11    12      13      14     
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,   None,   None,
                 #  15     16   17      18     
@@ -2158,7 +2697,7 @@ def WriteLOSSpectrum(INI, u, l):
                     #                                 CLOUD GAU   LIM   GN          D                  NI  
                     #                                 0     1     2     3           4                  5   
                     kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
-                    # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU CRT_TAU CRT_EMI
+                    # DE        NRA       STEP        BG          emit0       NTRUE SUM_TAU CRT_TAU CRT_EMI
                     # 6         7         8           9           10          11    12      13      14     
                     np.float32, np.int32, np.float32, np.float32, np.float32, None, None,   None,   None,
                     # 15      16                     17     18     19        20      21       22        23       24
@@ -2170,7 +2709,7 @@ def WriteLOSSpectrum(INI, u, l):
                 #                                 CLOUD  GAU   LIM   GN          D                  NI 
                 #                                 0      1     2     3           4                  5  
                 kernel_spe.set_scalar_arg_dtypes([None,  None, None, np.float32, cl.cltypes.float2, None,
-                # DE        NRA       STEP        BG          emis0       NTRUE  SUM_TAU
+                # DE        NRA       STEP        BG          emit0       NTRUE  SUM_TAU
                 # 6         7         8           9           10          11     12    
                 np.float32, np.int32, np.float32, np.float32, np.float32, None,  None,
                 # LCELLS, OFF,  PAR,  RHO,    FOLLOW    CENTRE             
@@ -2185,7 +2724,7 @@ def WriteLOSSpectrum(INI, u, l):
                 #                                 CLOUD GAU   LIM   GN          D                  NI 
                 kernel_spe.set_scalar_arg_dtypes([None, None, None, np.float32, cl.cltypes.float2, None,
                 # 6         7         8           9           10          11    12       14        15
-                # DE        NRA       STEP        BG          emis0       NTRUE SUM_TAU  FOLLOW    CENTRE
+                # DE        NRA       STEP        BG          emit0       NTRUE SUM_TAU  FOLLOW    CENTRE
                 np.float32, np.int32, np.float32, np.float32, np.float32, None, None,    np.int32, cl.cltypes.float3,
                 #  16     17     19        20      21       22         13       14
                 #  TKIN   ABU    LOS_EMIT  LENGTH  LOS_RHO  LOS_TKIN   LOS_ABU  TAGABS
@@ -2349,9 +2888,9 @@ def WriteColumndensity(INI):
         DE          =  0.0    
         GLOBAL      =  IRound(NRA, LOCAL)    
         STEP        =  INI['grid'] / INI['angle']
-        direction   =  cl.cltypes.make_float2()
+        direction   =  cl.cltypes.make_float2(0.0,0.0)
         direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
-        centre       =  cl.cltypes.make_float3()
+        centre       =  cl.cltypes.make_float3(0.0,0.0,0.0)
         centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
         if (isfinite(xc*yc*zc)):                                      # 2021-07-14 - map centre given by user
             centre['x'], centre['y'], centre['z']  =   xc, yc, zc
@@ -2436,9 +2975,9 @@ def WriteInfallIndex(INI):
         DE          =  0.0    
         GLOBAL      =  IRound(NRA, LOCAL)    
         STEP        =  INI['grid'] / INI['angle']
-        direction   =  cl.cltypes.make_float2()
+        direction   =  cl.cltypes.make_float2(0.0,0.0)
         direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
-        centre       =  cl.cltypes.make_float3()
+        centre       =  cl.cltypes.make_float3(0.0,0.0,0.0)
         centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
         if (isfinite(xc*yc*zc)):                                      # 2021-07-14 - map centre given by user
             centre['x'], centre['y'], centre['z']  =   xc, yc, zc
@@ -2507,7 +3046,9 @@ print("=========================================================================
 for ITER in range(INI['iterations']):
     print('   ITERATION %d/%d' % (1+ITER, INI['iterations']))
     t0    =  time.time()
-    Simulate()
+    Simulate()        # normal transitions and HFS bands
+    if (WITH_OVERLAP):
+        SimulateOL()  # general line overlap
     Tsim  =  time.time()-t0
     t0    =  time.time()
     if (INI['clsolve']):
@@ -2547,6 +3088,8 @@ if (1):
     # Save Tex files
     ul = INI['Tex']                # upper and lower level for each transition
     ## print(ul)
+    if (0):        
+        print("NI[15,15,15]",  NI_ARRAY.reshape(30,30,30,LEVELS)[15,15,15,:])
     for i in range(len(ul)//2):    # loop over transitions
         u, l  =  ul[2*i], ul[2*i+1]
         tr    =  MOL.L2T(u,l)
@@ -2585,9 +3128,9 @@ if (1):
         fp.close()
         if (OCTREE):
             m = nonzero(RHO>0.0)
-            print("  TEX      %3d  = %2d -> %2d,  [%.3f,%.3f]  %.3f K" % (tr, u, l, np.min(tex[m]), np.max(tex[m]), mean(tex[m])))
+            print("  TEX      %3d  = %2d -> %2d,  [%.3f,%.3f]  %.3f K" % (tr, u, l, np.min(tex[m]), np.max(tex[m]), np.mean(tex[m])))
         else:
-            print("  TEX      %3d  = %2d -> %2d,  [%.3f,%.3f]  %.3f K" % (tr, u, l, np.min(tex), np.max(tex), mean(tex)))
+            print("  TEX      %3d  = %2d -> %2d,  [%.3f,%.3f]  %.3f K" % (tr, u, l, np.min(tex), np.max(tex), np.mean(tex)))
     
         if (0):
             clf()
@@ -2603,11 +3146,27 @@ if (1):
 # Save spectra
 ul = INI['spectra']
 for i in range(len(ul)//2):
+    tran   =  MOL.L2T(ul[2*i], ul[2*i+1])
+    skip   =  False  # possibly skip transition if that is part of band = overlapping lines
+    if (WITH_OVERLAP):
+        for iband in range(OLBAND.BANDS):
+            if (tran in OLBAND.TRAN[iband]):  skip = True
+    ## if (skip): continue
     if (INI['losspectrum']>0): # we write only LOS contributions to a single spectrum
         WriteLOSSpectrum(INI, ul[2*i], ul[2*i+1])
     else:                      # normal spectral maps
         WriteSpectra(INI, ul[2*i], ul[2*i+1])
-
+        
+if (WITH_OVERLAP):             # save spectra for bands
+    bands = []
+    for i in range(len(ul)//2):
+        tran   =  MOL.L2T(ul[2*i], ul[2*i+1])
+        for iband in range(OLBAND.BANDS):
+            if (tran in OLBAND.TRAN[iband]):  bands.append(iband)
+    for iband in bands:
+        WriteSpectraOL(INI, OLBAND, iband)
+    
+        
 if (INI['coldensave']>0):      # save  maps of N(H2), N(mol), Tkin, <V_LOS, mass_weighted)
     WriteColumndensity(INI)
 

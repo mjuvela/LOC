@@ -282,7 +282,7 @@ __kernel void Spectra(
             a = 0.5f ;   A1 = 0.0f ;   A2 = 0.0f ;  dopA = 0.0f ;
          }
       }
-
+      
       slevel = level0 ;   sind = ind0 ;
       MPOS.x = POS0.x+(0.49f*dx/K)*DIR.x ; MPOS.y = POS0.y+(0.49f*dx/K)*DIR.y ;  MPOS.z = POS0.z+(0.49f*dx/K)*DIR.z ;
       b      =  GetStepOT(&MPOS, &BDIR, &slevel, &sind, RHO, OFF, PAR, 99, NULL, -1) / K ;      
@@ -300,7 +300,7 @@ __kernel void Spectra(
             b = 0.5f ;   B1 = 0.0f ;   B2 = 0.0f ;  dopB = 0.0f ;
          }
       }
-            
+      
       // if (slevel<level0) b = 0.5f*(b+0.5f) ;  // if b was in larger cell, it should get smaller weight?
       a   =  0.5f-a ;      b = 0.5f-b ;
 #  if 0
@@ -376,7 +376,7 @@ __kernel void Spectra(
          }
       }
       b       =   (2.0f*b+LB)/(K+LB) + (2.0f*a-K)/(K+LA) ;   // b = W1 ~ Centre
-
+      
       a       =   (K-2.0f*a)/(K+LA) ;                        // a = W2 ~ A,   (1-a-b) ~ B
       doppler =   b*doppler      + a*dopA + (1.0f-a-b)*dopB ;
       nu      =   b*NI[2*INDEX  ]  +  a*A1   +  (1.0f-a-b)*B1 ;   // INDEX = still index of the step start
@@ -384,15 +384,15 @@ __kernel void Spectra(
       
       tau     =  (fabs(A2)<1.0e-30f) ? (dx*1.0e-30f*GN*GL) : clamp((float)(dx*A2*GN*GL), -2.0f, 1.0e10f) ;
       // if (id==ID) printf("   W: %6.3f %6.3f %6.3f   nu %10.3e  tau %10.3e\n", b, a, 1.0f-a-b, nu, tau) ; // centre, ADIR, BDIR  = this, A, B      
-
+      
       
       
 # endif // MAP_INTERPOLATION==2 22222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222
       
-
       
       
-
+      
+      
       
 # if (MAP_INTERPOLATION==3) // four point interpolation
 #  if 0
@@ -464,8 +464,8 @@ __kernel void Spectra(
             b = 10.0f*K ;   B1 = NI[2*INDEX] ;   B2 = NI[2*INDEX+1] ;  dopB = doppler ;
          }
       }
-
-            
+      
+      
       
 #  define FUN(x) (sqrt(x))
       
@@ -492,8 +492,8 @@ __kernel void Spectra(
       A2      =   c*(w0*NI[2*INDEX+1]   +  wA*A2   + wB*B2    + wC*C2  ) ;
       
       tau     =  (fabs(A2)<1.0e-30f) ? (dx*1.0e-30f*GN*GL) : clamp((float)(dx*A2*GN*GL), -2.0f, 1.0e10f) ;
-
-           
+      
+      
 # endif // MAP_INTERPOLATION==3
       
       
@@ -571,7 +571,7 @@ __kernel void Spectra(
          NTRUE[i] += dx*RHO[INDEX]*profile[clamp(i-shift, 0, CHANNELS-1)] ;
       }
 #else
-#if (WITH_CRT>0)
+# if (WITH_CRT>0)
       Ctau       =  CRT_TAU[INDEX] * dx      ;
       Cemit      =  CRT_EMI[INDEX] * dx * GL ;
       for(i=0; i<CHANNELS; i++) {
@@ -581,14 +581,14 @@ __kernel void Spectra(
            (  (fabs(dtau)>0.01f)  ? ((1.0f-exp(-dtau))/dtau)  :  (1.0f-dtau*(0.5f-0.166666667f*dtau))  ) ;
          SUM_TAU[i] +=  dtau  ;
       }     
-#else
+# else
       for(i=c1; i<=c2; i++) {         
          dtau        = tau*profile[i-shift] ;
          NTRUE[i]   += emissivity*profile[i-shift]*GN*exp(-SUM_TAU[i])* 
            (  (fabs(dtau)>0.01f)  ?  ((1.0f-exp(-dtau))/dtau)  :  (1.0f-dtau*(0.5f-0.166666667f*dtau))) ;
          SUM_TAU[i] += dtau  ;
       }
-#endif
+# endif
 #endif 
       
       
@@ -602,7 +602,7 @@ __kernel void Spectra(
    
    
 #if (MASS_WEIGHTED_VELOCITY_PROFILE<1)
-#if 1
+# if 1
    for (i=0; i<CHANNELS; i++) {
       // NTRUE[i] -=  BG*(1.0f-exp(-SUM_TAU[i])) ;
       // optical depths 1e-10 or below => final NTRUE may be negative???
@@ -610,16 +610,16 @@ __kernel void Spectra(
       dtau   =   NTRUE[i] ;
       //  tau*(1-0.5*tau*(1-0.333333*tau)) better for |tau|<0.02
       NTRUE[i] -=  BG * ((fabs(tau)>0.01f ) ?  (1.0f-exp(-tau))  :  (tau*(1.0f-tau*(0.5f-0.166666667f*tau)))) ;
-#if 0
+#  if 0
       if (NTRUE[i]<-1.0e-6) {
          printf("%12.4e -> %12.4e,   BG=%12.4e  x  %12.4e, SUM_TAU=%.3e\n", dtau, NTRUE[i], BG,
                 ((fabs(tau)>0.005f) ? (1.0f-exp(-tau)) : (tau*(1.0f-tau*(0.5f-0.166666667f*tau)))), tau) ;
       }
-#endif
+#  endif
    } // for i over CHANNELS
-#else  // WITHOUT BACKGROUND -- ONLY FOR TESTING
+# else  // WITHOUT BACKGROUND -- ONLY FOR TESTING
    if (id==0) printf("x?") ;
-#endif
+# endif
 #endif
    
    
@@ -635,11 +635,11 @@ __kernel void Spectra(
 
 
 __kernel void Spectra_vs_LOS(                             
-#if (WITH_HALF==1)
+# if (WITH_HALF==1)
                              __global half     *CLOUD,        //  0 [CELLS,4] ==  vx, vy, vz, sigma
-#else
+# else
                              __global float4   *CLOUD,        //  0 [CELLS]: vx, vy, vz, sigma
-#endif
+# endif
                              GAUSTORE   float  *GAU,          //  1 precalculated gaussian profiles
                              constant int2     *LIM,          //  2 limits of ~zero profile function
                              const float        GN,           //  3 Gauss normalisation == C_LIGHT/(1e5*DV*freq)
@@ -652,16 +652,16 @@ __kernel void Spectra_vs_LOS(
                              const float        emis0,        // 10 h/(4pi)*freq*Aul*int2temp
                              __global float    *NTRUE_ARRAY,  // 11 nra*CHANNELS -- spectrum
                              __global float    *SUM_TAU_ARRAY,// 12 nde*CHANNELS -- optical depths
-#if (WITH_CRT>0)
+# if (WITH_CRT>0)
                              constant float    *CRT_TAU,      // 13 dust optical depth / GL
                              constant  float   *CRT_EMI,      // 14 dust emission photons/c/channel/H
-#endif
-#if (WITH_OCTREE>0)
+# endif
+# if (WITH_OCTREE>0)
                              __global  int     *LCELLS,       // 13, 15
                              __constant int    *OFF,          // 14, 16
                              __global   int    *PAR,          // 15, 17
                              __global   float  *RHO,          // 16, 18
-#endif
+# endif
                              const int FOLLOW,                // 17, 19
                              const float3       CENTRE,       // 18, 20  map centre in current
                              __global float    *TKIN,         // TKIN[CELLS]
@@ -714,16 +714,16 @@ __kernel void Spectra_vs_LOS(
    // Offsets in RA and DE directions, (RA, DE) are just indices [0, NRA[, [0,NDE[
    // CENTRE are the indices for the map centre using the current pixel size
    // POS is already at the map centre
-#if 0
+# if 0
    POS.x  =  CENTRE.x + (RA-0.5*(NRA-1.0f))*STEP*RV.x + DE*STEP*DV.x ;
    POS.y  =  CENTRE.y + (RA-0.5*(NRA-1.0f))*STEP*RV.y + DE*STEP*DV.y ;
    POS.z  =  CENTRE.z + (RA-0.5*(NRA-1.0f))*STEP*RV.z + DE*STEP*DV.z ;
-#else  // a single LOS, towards the map centre
+# else  // a single LOS, towards the map centre
    POS.x  =  CENTRE.x ; 
    POS.y  =  CENTRE.y ;
    POS.z  =  CENTRE.z ;
-#endif
-
+# endif
+   
    
    // int ID = ((fabs(POS.y-1.5)<0.02)&&(fabs(POS.z-0.7)<0.02)) ? id : -1 ;
    int ID = ((fabs(POS.y-2.0)<0.05)&&(fabs(POS.z-1.5)<0.02)) ? id : -1 ;
@@ -745,14 +745,14 @@ __kernel void Spectra_vs_LOS(
    
    int level0 ;
    
-#if (WITH_OCTREE>0)
+# if (WITH_OCTREE>0)
    int OTL, OTI, INDEX ;
    // Note: for OCTREE=5,  input is [0,NX], output coordinates are [0,1] for root-grid cells
    IndexG(&POS, &OTL, &OTI, RHO, OFF) ;
    INDEX =  (OTI>=0) ?  (OFF[OTL]+OTI) : (-1) ;
-#else
+# else
    int INDEX   =  Index(POS) ;
-#endif
+# endif
    for(int i=0; i<CHANNELS; i++) {
       NTRUE[i]   = 0.0f ;
       SUM_TAU[i] = 0.0f ;
@@ -760,9 +760,9 @@ __kernel void Spectra_vs_LOS(
    float tau, dtau, emissivity, doppler, nu, sst ;
    int row, shift, c1, c2  ;
    GAUSTORE float* profile ;
-#if (WITH_CRT>0)
+# if (WITH_CRT>0)
    float Ctau, Cemit, pro, distance=0.0f ;
-#endif   
+# endif   
    float distance = 0.0f ;
    
    
@@ -770,11 +770,11 @@ __kernel void Spectra_vs_LOS(
    
    while (INDEX>=0) {
       
-#if (WITH_OCTREE>0)   // INDEX  =  OFF[OTL] + OTI ;  --- update INDEX at the end of the step
+# if (WITH_OCTREE>0)   // INDEX  =  OFF[OTL] + OTI ;  --- update INDEX at the end of the step
       // OCTREE==5 uses level=0 coordinates POS=[0,1], not [0,NX]
       dx        =  GetStepOT(&POS, &DIR, &OTL, &OTI, RHO, OFF, PAR, 99, NULL, -1) ; // updates POS, OTL, OTI
       // RPOS = POS ; RootPos(&RPOS, OTL, OTI, OFF, PAR) ;
-#else
+# else
       if (DIR.x<0.0f)   dx = -     fmod(POS.x,ONE)  / DIR.x - EPS/DIR.x;
       else              dx =  (ONE-fmod(POS.x,ONE)) / DIR.x + EPS/DIR.x;
       if (DIR.y<0.0f)   dy = -     fmod(POS.y,ONE)  / DIR.y - EPS/DIR.y;
@@ -782,7 +782,7 @@ __kernel void Spectra_vs_LOS(
       if (DIR.z<0.0f)   dz = -     fmod(POS.z,ONE)  / DIR.z - EPS/DIR.z;
       else              dz =  (ONE-fmod(POS.z,ONE)) / DIR.z + EPS/DIR.z;
       dx         =  min(dx, min(dy, dz)) + EPS ;      // actual step
-#endif
+# endif
       
       
 # if (WITH_HALF==0)
@@ -798,11 +798,11 @@ __kernel void Spectra_vs_LOS(
       distance  += dx ;                  
       tau        =  clamp(tau, 1.0e-30f, 1.0e10f) ;  // $$$  KILL ALL MASERS
       
-#if (WITH_HALF==0)
+# if (WITH_HALF==0)
       row        =  clamp((int)round(log(CLOUD[INDEX].w/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;
-#else
+# else
       row        =  clamp((int)round(log(vload_half(3,&(CLOUD[4*INDEX]))/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;
-#endif
+# endif
       
       profile    =  &GAU[row*CHANNELS] ;
       shift      =  round(doppler/WIDTH) ;
@@ -815,15 +815,15 @@ __kernel void Spectra_vs_LOS(
       // printf("Doppler %.3e,  sigma %.3e, row %d/%d\n", doppler, CLOUD[INDEX].w, row, GNO) ;
       
       
-#if 1
+# if 1
       if (level0<MINMAPLEVEL) {
          tau = 0.0f ; emissivity = 0.0f ;   // ignore cells below MINMAPLEVEL
       }
-#endif
+# endif
       
       
       
-#if (WITH_CRT>0)
+# if (WITH_CRT>0)
       Ctau       =  CRT_TAU[INDEX] * dx      ;
       Cemit      =  CRT_EMI[INDEX] * dx * GL ;
       for(i=0; i<CHANNELS; i++) {
@@ -836,7 +836,7 @@ __kernel void Spectra_vs_LOS(
            (  (fabs(dtau)>0.01f)  ? ((1.0f-exp(-dtau))/dtau)  :  (1.0f-dtau*(0.5f-0.166666667f*dtau))  ) ;
          if (TAGABS==1)  SUM_TAU[i] +=  dtau  ;
       }     
-#else
+# else
       for(i=c1; i<=c2; i++) {         
          dtau        = tau*profile[i-shift] ;
          NTRUE[i]   += emissivity*profile[i-shift]*GN*exp(-SUM_TAU[i])* 
@@ -846,7 +846,7 @@ __kernel void Spectra_vs_LOS(
            (  (fabs(dtau)>0.01f)  ?  ((1.0f-exp(-dtau))/dtau)  :  (1.0f-dtau*(0.5f-0.166666667f*dtau))) ;
          if (TAGABS==1) SUM_TAU[i] += dtau  ;
       }
-#endif
+# endif
       LENGTH[step]   = dx ;
       LOS_RHO[step]  =  RHO[INDEX] ;
       LOS_TKIN[step] = TKIN[INDEX] ;
@@ -855,17 +855,17 @@ __kernel void Spectra_vs_LOS(
       
       
       
-#if (WITH_OCTREE>0)
+# if (WITH_OCTREE>0)
       INDEX =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1) ;
-#else
+# else
       POS.x  += dx*DIR.x ;  POS.y  += dx*DIR.y ;  POS.z  += dx*DIR.z ;
       INDEX = Index(POS) ;         
-#endif
+# endif
    } // while INDEX>=0
    
    
-
-#if 1  // background
+   
+# if 1  // background
    for (i=0; i<CHANNELS; i++) {
       tau    =   SUM_TAU[i] ;
       dtau   =   NTRUE[i] ;
@@ -873,9 +873,9 @@ __kernel void Spectra_vs_LOS(
       LOS_EMIT[step*CHANNELS+i] = 
         - BG * ((fabs(tau)>0.01f ) ?  (1.0f-exp(-tau))  :  (tau*(1.0f-tau*(0.5f-0.166666667f*tau)))) ;
    } // for i over CHANNELS
-#else  // WITHOUT BACKGROUND -- ONLY FOR TESTING
+# else  // WITHOUT BACKGROUND -- ONLY FOR TESTING
    if (id==0) printf("x?") ;
-#endif
+# endif
    LENGTH[step] = -1.1e10 ;   // background entry has a corresponding large negative entry in the LENGTH array
    
 }  // Spectra_vs_LOS() 
@@ -1169,7 +1169,7 @@ __kernel void LOS_infall(
       INDEX = Index(POS) ;         
 #endif
    } // while INDEX>=0
-
+   
    // if (id%111==0) printf("A %8.4f %8.4f %8.4f\n", POS.x, POS.y, POS.z) ;
    
    // if (distance>0.0f)  printf("OK1 ---- distance0   %.3e   density %.3e\n", distance0, s) ;
@@ -1185,7 +1185,7 @@ __kernel void LOS_infall(
 #else
    INDEX   =  Index(POS) ;
 #endif
-
+   
    
    s = 0.0f ;  weight = 0.0f ;  depth = 0.0f ;  distance = 0.0f ;
    while (INDEX>=0) {   // starting from the observer side, step to the back of the model
@@ -1229,7 +1229,7 @@ __kernel void LOS_infall(
       INDEX = Index(POS) ;         
 #endif
    } // while INDEX>=0
-
+   
    // if (depth!=0.0f)  printf("OK2 ---- depth %.3e\n", depth) ;
    
    INFALL[id]   =  (weight>0.0f) ?  (s/weight) : 0.0f  ;                // infall index [km/s]
@@ -1249,9 +1249,6 @@ __kernel void LOS_infall(
 //              SpectraHF() for both Cartesian and OCTREE==4 cases, to write the spectra
 
 # if (WITH_OCTREE==0)
-
-
-
 
 __kernel void UpdateHF( // @h   non-octree version !!!!!!!!
                         __global float4 *CLOUD,   //  0 [CELLS]: vx, vy, vz, sigma
@@ -1390,7 +1387,7 @@ __kernel void UpdateHF( // @h   non-octree version !!!!!!!!
             profile[c1+ii] +=  HF[icomp].y * pro[LIM[row].x+ii] ;
          }  // this assumes that sum(HFI[].y) == 1.0 !!
       }
-            
+      
       sum_delta_true = all_escaped = 0.0f ;
       
       for(int ii=0; ii<NCHN; ii++)  {
@@ -1446,7 +1443,7 @@ __kernel void UpdateHF( // @h   non-octree version !!!!!!!!
 
 
 
-__kernel void SpectraHF(  // @h
+__kernel void SpectraHF(  // @h    with octree and with Cartesian grids
 # if (WITH_HALF==1)
                           __global short4 *CLOUD,        //  0 [CELLS]: vx, vy, vz, sigma
 # else
@@ -1484,7 +1481,8 @@ __kernel void SpectraHF(  // @h
    int  id = get_global_id(0) ;
    if (id>=NRA) return ; // no more rays
    int lid = get_local_id(0) ;
-   
+
+   // printf("NCHN %d < MAXCHN %d\n", NCHN, MAXCHN) ;
    __global float *NTRUE   = &(NTRUE_ARRAY[id*NCHN]) ;    // we use only NTRUE_ARRAY[id, NCHN] < MAXCHN
    __global float *SUM_TAU = &(SUM_TAU_ARRAY[id*NCHN]) ;
    int i ;
@@ -1587,10 +1585,13 @@ __kernel void SpectraHF(  // @h
    
    GAUSTORE float* pro ;
    
-# if (LOC_LOWMEM<1)   
+# if (LOC_LOWMEM<1)   // SpectraHF
    __local float  profile_array[LOCAL*MAXCHN] ;
-   __local float *profile = &profile_array[lid*MAXCHN] ;
+   __local float *profile = &(profile_array[lid*MAXCHN]) ;
 # else
+   // printf("id %6d / NRA = %d\n", id, NRA) ;
+   // ??? remove the above printf() and one gets
+   //     malloc(): unsorted double linked list corrupted  Aborted (core dumped)
    __global float *profile = &(PROFILE[id*MAXCHN]) ;  // PROFILE[id, MAXCHN] --- work space
 # endif
    
@@ -1670,7 +1671,7 @@ __kernel void SpectraHF(  // @h
          }
          // this assumes that sum(HFI[].y) == 1.0
       }
-
+      
       
       
       // emissivity =  H_PIx4 * freq * nu * Aul *dx  * I2T ;
@@ -1700,7 +1701,7 @@ __kernel void SpectraHF(  // @h
 # endif
    } // while INDEX
    
-
+   
    
 # if 0
    for (i=0; i<NCHN; i++) NTRUE[i] -=  BG*(1.0f-exp(-SUM_TAU[i])) ;
@@ -1710,7 +1711,7 @@ __kernel void SpectraHF(  // @h
       NTRUE[i] -=  BG *  (  (fabs(dtau)>0.02f) ? (1.0f-exp(-dtau)) : (dtau*(1.0f-dtau*(0.5f-0.166666667f*dtau)))  ) ;
    }
 # endif
-
+   
    
 }
 
@@ -2405,182 +2406,182 @@ __kernel void UpdateHF4(  // @h
       RES[2*INDEX  ]  +=  sij ;
       RES[2*INDEX+1]  +=  all_escaped) ;
 #   else
-      AADD(&(RES[2*INDEX]), sij) ;
-      AADD(&(RES[2*INDEX+1]), all_escaped) ;
+   AADD(&(RES[2*INDEX]), sij) ;
+   AADD(&(RES[2*INDEX+1]), all_escaped) ;
 #   endif
-      
+   
 #  else   // not  WITH_CRT ***************************************************************************************
-      
-      
-      // because of c1, the same NTRUE elements may be updated each time by different work items...
-      barrier(CLK_LOCAL_MEM_FENCE) ;    // local NTRUE elements possibly updated by different threads
-      
-      
+   
+   
+   // because of c1, the same NTRUE elements may be updated each time by different work items...
+   barrier(CLK_LOCAL_MEM_FENCE) ;    // local NTRUE elements possibly updated by different threads
+   
+   
 #   if (WITH_ALI>0) // *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
-      for(int i=lid; i<NCHN; i+=ls)  {
-         w               =  tmp_tau*profile[i] ; // profile already covers same NCHN channels as NTRUE
+   for(int i=lid; i<NCHN; i+=ls)  {
+      w               =  tmp_tau*profile[i] ; // profile already covers same NCHN channels as NTRUE
 #    if 0
-         if (w<1.0e-6f) continue ;
-#   endif
-         factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
-         // factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
-         escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
-         absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
-         NTRUE[i]       +=  escape-absorbed ;
-         sum_delta_true +=  absorbed  ;          // ignore photons absorbed in emitting cell
-         all_escaped    +=  escape ;             // sum of escaping photons over the profile
-      }   // over channels
-      SDT[lid] = sum_delta_true ;  AE[lid] = all_escaped ; // all work items save their own results
-      barrier(CLK_LOCAL_MEM_FENCE) ;             // all agree on NTRUE, all know SDT and AE
-      if (lid==0) {                              // lid=0 sums up and saves absorptions and escaped photons
-         for(int i=1; i<LOCAL; i++) {  
-            sum_delta_true += SDT[i] ;      all_escaped    +=  AE[i] ;     
-         }
-#    if 0
-         all_escaped     =  clamp(all_escaped, 0.0001f*weight*nu*Aul, 0.9999f*weight*nu*Aul) ; // must be [0,1]
+      if (w<1.0e-6f) continue ;
 #    endif
-         // RES[2*INDEX]   +=  A_b * (sum_delta_true / nb_nb) ;
-         // RES[2*INDEX+1] +=  all_escaped ;
-         w  =  A_b * (sum_delta_true/nb_nb) ;
+      factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+      // factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+      escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
+      absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
+      NTRUE[i]       +=  escape-absorbed ;
+      sum_delta_true +=  absorbed  ;          // ignore photons absorbed in emitting cell
+      all_escaped    +=  escape ;             // sum of escaping photons over the profile
+   }   // over channels
+   SDT[lid] = sum_delta_true ;  AE[lid] = all_escaped ; // all work items save their own results
+   barrier(CLK_LOCAL_MEM_FENCE) ;             // all agree on NTRUE, all know SDT and AE
+   if (lid==0) {                              // lid=0 sums up and saves absorptions and escaped photons
+      for(int i=1; i<LOCAL; i++) {  
+         sum_delta_true += SDT[i] ;      all_escaped    +=  AE[i] ;     
+      }
+#    if 0
+      all_escaped     =  clamp(all_escaped, 0.0001f*weight*nu*Aul, 0.9999f*weight*nu*Aul) ; // must be [0,1]
+#    endif
+      // RES[2*INDEX]   +=  A_b * (sum_delta_true / nb_nb) ;
+      // RES[2*INDEX+1] +=  all_escaped ;
+      w  =  A_b * (sum_delta_true/nb_nb) ;
 #    if (NO_ATOMICS>0)
-         RES[2*INDEX  ] +=  w ;
-         RES[2*INDEX+1] +=  all_escaped ;
+      RES[2*INDEX  ] +=  w ;
+      RES[2*INDEX+1] +=  all_escaped ;
 #    else
-         AADD(&(RES[2*INDEX]),    w) ;
-         AADD(&(RES[2*INDEX+1]),  all_escaped) ;
+      AADD(&(RES[2*INDEX]),    w) ;
+      AADD(&(RES[2*INDEX+1]),  all_escaped) ;
 #    endif
-      } // lid==0
-      // }      
+   } // lid==0
+   // }      
 #   else // else no ALI *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
-      for(int i=lid; i<NCHN; i+=ls)  {
-         w               =  tmp_tau*profile[i] ;
-         factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
-         escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
-         absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
-         NTRUE[i]       +=  escape-absorbed ;
-         sum_delta_true +=  absorbed - escape ;  // later sum_delta_true +=  W*nu*Aul
-      }   // over channels
-      SDT[lid] = sum_delta_true ;
-      barrier(CLK_LOCAL_MEM_FENCE) ;
-      if (lid==0) {
-         for(int i=1; i<LOCAL; i++)  sum_delta_true += SDT[i] ;    
-         w  =   A_b  * ((weight*nu*Aul + sum_delta_true) / nb_nb)  ;
+   for(int i=lid; i<NCHN; i+=ls)  {
+      w               =  tmp_tau*profile[i] ;
+      factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+      factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+      escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
+      absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
+      NTRUE[i]       +=  escape-absorbed ;
+      sum_delta_true +=  absorbed - escape ;  // later sum_delta_true +=  W*nu*Aul
+   }   // over channels
+   SDT[lid] = sum_delta_true ;
+   barrier(CLK_LOCAL_MEM_FENCE) ;
+   if (lid==0) {
+      for(int i=1; i<LOCAL; i++)  sum_delta_true += SDT[i] ;    
+      w  =   A_b  * ((weight*nu*Aul + sum_delta_true) / nb_nb)  ;
 #    if (NO_ATOMICS>0)
-         RES[INDEX] +=  w ;
+      RES[INDEX] +=  w ;
 #    else
-         AADD((__global float*)(RES+INDEX), w) ;
+      AADD((__global float*)(RES+INDEX), w) ;
 #    endif
-      } 
+   } 
 #   endif // no ALI *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
-      
+   
 #  endif  // WITH OR WITHOUT CRT
+   
+   
+   // } // RHO>CLIP !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
-      
-      // } // RHO>CLIP !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      
-      
-      
-      barrier(CLK_LOCAL_MEM_FENCE) ;
+   
+   
+   barrier(CLK_LOCAL_MEM_FENCE) ;
 #  if (BRUTE_COOLING>0)
-      // total number of photons in the package as it exits the cell
-      if (lid==0) {
-         float cool = 0.0f ;
-         for(int i=0; i<NCHN; i++) cool += NTRUE[i] ;
-         COOL[INDEX] += cool ; // cooling of cell INDEX --- each work group distinct rays => no need for atomics
-      }
+   // total number of photons in the package as it exits the cell
+   if (lid==0) {
+      float cool = 0.0f ;
+      for(int i=0; i<NCHN; i++) cool += NTRUE[i] ;
+      COOL[INDEX] += cool ; // cooling of cell INDEX --- each work group distinct rays => no need for atomics
+   }
 #  endif
-      
-      
-      
-      
-      
-      // Updates at the end of the step, POS has been already updated, OTL and OTI point to the new cell
-      INDEX   =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1) ;
-      
+   
+   
+   
+   
+   
+   // Updates at the end of the step, POS has been already updated, OTL and OTI point to the new cell
+   INDEX   =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1) ;
+   
 #  if (BRUTE_COOLING>0)  // heating of the next cell, once INDEX has been updated
-      if (INDEX>=0) {
-         if (lid==0)  COOL[INDEX] -= cool ; // heating of the next cell
-      }
+   if (INDEX>=0) {
+      if (lid==0)  COOL[INDEX] -= cool ; // heating of the next cell
+   }
 #  endif
-      
-      if (INDEX>=0) {
-         if (RHO[INDEX]<=0.0f) { // we stepped to a refined cell (GetStep goes only to a cell OTL<=OTLO)
-            continue ;           // step down one level at the beginning of the main loop
-         }
+   
+   if (INDEX>=0) {
+      if (RHO[INDEX]<=0.0f) { // we stepped to a refined cell (GetStep goes only to a cell OTL<=OTLO)
+         continue ;           // step down one level at the beginning of the main loop
       }
-      
-      
-      if (OTL<RL) {        // we are up to a level where this ray no longer exists
-         INDEX=-1 ;        
-      } else {      
-         if (INDEX<0) {    // ray exits the cloud... possibly continues on the other side
-            if (POS.x>=NX  ) {   if (LEADING!=0)  POS.x =    EPS ;   }
-            if (POS.x<=ZERO) {   if (LEADING!=1)  POS.x = NX-EPS ;   } 
-            if (POS.y>=NY  ) {   if (LEADING!=2)  POS.y =    EPS ;   }
-            if (POS.y<=ZERO) {   if (LEADING!=3)  POS.y = NY-EPS ;   } 
-            if (POS.z>=NZ  ) {   if (LEADING!=4)  POS.z =    EPS ;   }
-            if (POS.z<=ZERO) {   if (LEADING!=5)  POS.z = NZ-EPS ;   } 
-            IndexGR(&POS, &OTL, &OTI, RHO, OFF) ;  // we remain in a root-grid cell => OTL==0 !
-            INDEX =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1)  ;  
-            if (INDEX>=0) {   // new level-0 ray started on the opposite side (may be a parent cell)
-               RL = 0 ;  OTLO = 0 ; 
-               // we had already barrier after the previous NTRUE update
-               for(int i=lid; i<NCHN; i+=ls)  NTRUE[i] = BG * DIRWEI ;
-               barrier(CLK_LOCAL_MEM_FENCE) ;
+   }
+   
+   
+   if (OTL<RL) {        // we are up to a level where this ray no longer exists
+      INDEX=-1 ;        
+   } else {      
+      if (INDEX<0) {    // ray exits the cloud... possibly continues on the other side
+         if (POS.x>=NX  ) {   if (LEADING!=0)  POS.x =    EPS ;   }
+         if (POS.x<=ZERO) {   if (LEADING!=1)  POS.x = NX-EPS ;   } 
+         if (POS.y>=NY  ) {   if (LEADING!=2)  POS.y =    EPS ;   }
+         if (POS.y<=ZERO) {   if (LEADING!=3)  POS.y = NY-EPS ;   } 
+         if (POS.z>=NZ  ) {   if (LEADING!=4)  POS.z =    EPS ;   }
+         if (POS.z<=ZERO) {   if (LEADING!=5)  POS.z = NZ-EPS ;   } 
+         IndexGR(&POS, &OTL, &OTI, RHO, OFF) ;  // we remain in a root-grid cell => OTL==0 !
+         INDEX =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1)  ;  
+         if (INDEX>=0) {   // new level-0 ray started on the opposite side (may be a parent cell)
+            RL = 0 ;  OTLO = 0 ; 
+            // we had already barrier after the previous NTRUE update
+            for(int i=lid; i<NCHN; i+=ls)  NTRUE[i] = BG * DIRWEI ;
+            barrier(CLK_LOCAL_MEM_FENCE) ;
 #  if (BRUTE_COOLING>0)
-               if (lid==0) {
-                  dr = BG*DIRWEI*NCHN ;  COOL[INDEX] -= dr ; // heating of the entered cell
-               }
-#  endif
-               continue ;
+            if (lid==0) {
+               dr = BG*DIRWEI*NCHN ;  COOL[INDEX] -= dr ; // heating of the entered cell
             }
-         } // if INDEX<0
-      }
-      
-      
-      // rescale on every change of resolution
-      if ((INDEX>=0)&&(OTL<OTLO)) {   // @s ray continues at a lower hierarchy level => NTRUE may have to be scaled
-         dr = pown(4.0f, OTLO-OTL) ;  // scale on every change of resolution
-         for(int i=lid; i<NCHN; i+=ls)  NTRUE[i] *= dr ;     
-         continue ;  // we went to lower level => this cell is a leaf
-      }
-      
-      
-      // if INDEX still negative, try to take a new ray from the buffer
-      // 0   1     2  3  4  6     ...       NTRUE[NCHN] 
-      // OTL OTI   x  y  z  RL    x y z RL                  
-      if ((INDEX<0)&&(NBUF>0)) {            // NBUF>0 => at least one ray exists in the buffer
-         barrier(CLK_GLOBAL_MEM_FENCE) ;    // all work items access BUFFER
-         c1    =  (NBUF-1)*(26+NCHN) ;      // CHANNELS->NCHN elements per buffer entry
-         OTL   =  (int)BUFFER[c1+0] ;       // OTL ...
-         OTLO  =  OTL ;                     // ???
-         OTI   =  F2I(BUFFER[c1+1]) ;       // and OTI of the ray that was split
-         for(sr=5; sr>=0; sr--) {         
-            dr    =  BUFFER[c1+2+4*sr] ;    // read dr
-            if (dr>-0.1f) break ;           // found a ray
+#  endif
+            continue ;
          }
-         POS.x   =  dr ;
-         POS.y   =  BUFFER[c1+3+4*sr] ;  
-         POS.z   =  BUFFER[c1+4+4*sr] ;
-         RL      =  BUFFER[c1+5+4*sr] ;
-         SID     =  4*(int)floor(POS.z) + 2*(int)floor(POS.y) + (int)floor(POS.x) ;   // cell in octet
-         OTI     =  8*(int)(OTI/8) + SID ;        // OTI in the buffer was for the original ray that was split
-         INDEX   =  OFF[OTL]+OTI ;                // global index -- must be >=0 !!!
-         // copy NTRUE --- values in BUFFER have already been divided by four
-         barrier(CLK_GLOBAL_MEM_FENCE) ;          // all have read BUFFER
-         if (lid==0)  BUFFER[c1+2+4*sr] = -1.0f ; // mark as used
-         if (sr==0)   NBUF -= 1 ;
-         c1     +=  26 ;
-         for(int i=lid; i<NCHN; i+=ls)  NTRUE[i] = BUFFER[c1+i] ;  // NTRUE correct for level OTL
-         barrier(CLK_LOCAL_MEM_FENCE) ;         
-         // note - this ray be inside a parent cell => handled at the beginnign of the main loop
-      } // (INDEX<=0)&(NBUF>0)
-      
-      
-   } // while INDEX>=0
+      } // if INDEX<0
+   }
    
    
+   // rescale on every change of resolution
+   if ((INDEX>=0)&&(OTL<OTLO)) {   // @s ray continues at a lower hierarchy level => NTRUE may have to be scaled
+      dr = pown(4.0f, OTLO-OTL) ;  // scale on every change of resolution
+      for(int i=lid; i<NCHN; i+=ls)  NTRUE[i] *= dr ;     
+      continue ;  // we went to lower level => this cell is a leaf
+   }
+   
+   
+   // if INDEX still negative, try to take a new ray from the buffer
+   // 0   1     2  3  4  6     ...       NTRUE[NCHN] 
+   // OTL OTI   x  y  z  RL    x y z RL                  
+   if ((INDEX<0)&&(NBUF>0)) {            // NBUF>0 => at least one ray exists in the buffer
+      barrier(CLK_GLOBAL_MEM_FENCE) ;    // all work items access BUFFER
+      c1    =  (NBUF-1)*(26+NCHN) ;      // CHANNELS->NCHN elements per buffer entry
+      OTL   =  (int)BUFFER[c1+0] ;       // OTL ...
+      OTLO  =  OTL ;                     // ???
+      OTI   =  F2I(BUFFER[c1+1]) ;       // and OTI of the ray that was split
+      for(sr=5; sr>=0; sr--) {         
+         dr    =  BUFFER[c1+2+4*sr] ;    // read dr
+         if (dr>-0.1f) break ;           // found a ray
+      }
+      POS.x   =  dr ;
+      POS.y   =  BUFFER[c1+3+4*sr] ;  
+      POS.z   =  BUFFER[c1+4+4*sr] ;
+      RL      =  BUFFER[c1+5+4*sr] ;
+      SID     =  4*(int)floor(POS.z) + 2*(int)floor(POS.y) + (int)floor(POS.x) ;   // cell in octet
+      OTI     =  8*(int)(OTI/8) + SID ;        // OTI in the buffer was for the original ray that was split
+      INDEX   =  OFF[OTL]+OTI ;                // global index -- must be >=0 !!!
+      // copy NTRUE --- values in BUFFER have already been divided by four
+      barrier(CLK_GLOBAL_MEM_FENCE) ;          // all have read BUFFER
+      if (lid==0)  BUFFER[c1+2+4*sr] = -1.0f ; // mark as used
+      if (sr==0)   NBUF -= 1 ;
+      c1     +=  26 ;
+      for(int i=lid; i<NCHN; i+=ls)  NTRUE[i] = BUFFER[c1+i] ;  // NTRUE correct for level OTL
+      barrier(CLK_LOCAL_MEM_FENCE) ;         
+      // note - this ray be inside a parent cell => handled at the beginnign of the main loop
+   } // (INDEX<=0)&(NBUF>0)
+   
+   
+} // while INDEX>=0
+
+
 }  // end of UpdateHF4()
 
 
@@ -2766,7 +2767,7 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
                         GAUSTORE  float *GAU,      //  2 precalculated gaussian profiles [GNO,CHANNELS]
                         constant int2   *LIM,      //  3 limits of ~zero profile function [GNO]
                         const float      Aul,      //  4 Einstein A(upper->lower)
-                        const float      A_b,      //  5 (g_u/g_l)*B(upper->lower)
+                        const float      Ab,      //  5 (g_u/g_l)*B(upper->lower) x   hf / (4*pi)
                         const float      GN,       //  6 Gauss normalisation == C_LIGHT/(1e5*DV*freq)
                         __global float  *PL,       //  7 just for testing
                         const float      APL,      //  8 average path length [GL]
@@ -2776,8 +2777,8 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
                         const int        LEADING,  // 12 leading edge
                         const REAL3      POS0,     // 13 initial position of id=0 ray
                         const float3     DIR,      // 14 ray direction
-                        __global float  *NI,       // 15 [CELLS]:  NI[upper] + NB_NB
-                        __global float  *RES,      // 16 [CELLS]:  SIJ, ESC
+                        __global float  *NI,       // 15 [CELLS,2]:  NI[upper] + NB_NB
+                        __global float  *RES,      // 16 [CELLS,2]:  SIJ, ESC
                         __global float  *NTRUES    // 17 [GLOBAL*MAXCHN]
 # if (WITH_CRT>0)
                         ,constant float *CRT_TAU,  // 18 dust optical depth / GL
@@ -2795,6 +2796,8 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
    float  tmp_tau, tmp_emit, nb_nb, factor, escape, absorbed ;
 # endif
    
+   // printf("Aul %.3e Ab %.3e GN %.3e BG %.3e DIRWEI %.3e EWEI %.3e\n", Aul, Ab, GN, BG, DIRWEI, EWEI) ;
+   
    float sum_delta_true, all_escaped, nu ;
    int row, shift, INDEX, c1, c2 ;
    // Each work item processes one ray, rays are two cells apart (ONESHOT==0) to avoid need for synchronisation
@@ -2802,6 +2805,8 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
    // on the opposite side and the ray ends when the downstream border is reached.
    int  id = get_global_id(0) ;
    int lid = get_local_id(0) ;
+   int steps = 0 ;
+   // if (id>0) return ;
    
 # if (LOC_LOWMEM>0)
    __global float *NTRUE = &NTRUES[id*CHANNELS] ;
@@ -2851,7 +2856,6 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
    }
 # endif
    
-   
 # if (FIX_PATHS>0)
    POS_LE = POS ;
 # endif
@@ -2877,7 +2881,6 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
    
    
    while(INDEX>=0) {
-      
       
 # if (NX>DIMLIM) // ====================================================================================================
       double dx, dy, dz ;
@@ -2914,11 +2917,11 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
       // avoid profile function outside profile channels LIM.x, LIM.y
       c1        =  max(LIM[row].x+shift, max(0, shift)) ;
       c2        =  min(LIM[row].y+shift, min(CHANNELS-1, CHANNELS-1+shift)) ;
-      
       weight    =  (dx/APL)*VOLUME ;                    // correct !!   .. NDIR=0, weight==1.0/6.0
+      
       tmp_tau   =   dx*nb_nb*GN ;
       if (fabs(tmp_tau)<1.0e-32f) tmp_tau = 1.0e-32f ;  // was e-32
-      tmp_emit  =  weight*nu*(Aul/tmp_tau) ;            // GN include grid length [cm]
+      tmp_emit  =   weight*nu*(Aul/tmp_tau) ;           // GN include grid length [cm]
       
       sum_delta_true =  0.0f ;
       all_escaped    =  0.0f ;
@@ -2946,9 +2949,9 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
          // Dust emission leaving the cell 
          Dleave =  Cemit *                     tt ;
          // SIJ updates, first incoming photons then absorbed dust emission
-         sij   +=  A_b * pro*GN*dx * NTRUE[ii]*tt ;
-         // sij         += A_b * profile[ii]*GN*Cemit*dx*(1.0f-tt)/Ttau ; // GN includes GL!
-         sij   +=  A_b * pro*GN*dx * Cemit*ttt ;    // GN includes GL!
+         sij   +=  Ab * pro*GN*dx * NTRUE[ii]*tt ;
+         // sij         += Ab * profile[ii]*GN*Cemit*dx*(1.0f-tt)/Ttau ; // GN includes GL!
+         sij   +=  Ab * pro*GN*dx * Cemit*ttt ;    // GN includes GL!
          // "Escaping" line photons = absorbed by dust or leave the cell
          all_escaped +=  Lleave  +  weight*nu*Aul*pro * Ctau * ttt ;
          // Total change of photons in the package
@@ -2965,10 +2968,11 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
       
       
       
-#  if  (WITH_ALI>0)      
+#  if  (WITH_ALI>0)  // A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A
       for(int ii=c1; ii<=c2; ii++)  {
          w               =  tmp_tau*profile[ii-shift] ;
          factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+         // factor          =  (1.0f-exp(-w)) ;
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell .... tmp_emit  =  weight*nu*(Aul/tmp_tau)
          absorbed        =  NTRUE[ii]*factor ;   // incoming photons that are absorbed
          NTRUE[ii]      +=  escape-absorbed ;         
@@ -2977,16 +2981,35 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
       }   // over channels
       // Update SIJ and ESC
       // without atomics, large dTex in individual cells
+      
+      
+#   if 0
+      if (id==0) {  // RES[CELLS,2]
+         w               =  tmp_tau*profile[CHANNELS/2] ;
+         //            sij      dsij                       tau      nt              
+         printf("@    %12.4e    %12.4e                     %12.4e  %12.4e  %12.4e\n",  
+                RES[2*INDEX+0], Ab*(sum_delta_true/nb_nb), tmp_tau, NTRUE[CHANNELS/2], 
+                tmp_emit*(1.0f-exp(-w))) ;
+         steps += 1 ;
+         for(int i=0; i<CHANNELS; i++) {
+            printf("& %2d  %3d   %12.5e %12.5e %12.5e\n", steps, i, NTRUE[i], tmp_tau*profile[i], profile[i]) ;
+         }
+         if (steps>5)  return ;
+      }
+#   endif
+      
+      
 #   if (NO_ATOMICS>0)
-      RES[2*INDEX  ]  +=  A_b*(sum_delta_true/nb_nb) ; // parentheses!
-      RES[2*INDEX+1]  +=  all_escaped ;
+      RES[2*INDEX  ]  +=  Ab*(sum_delta_true/nb_nb) ;   // sij --- parentheses!
+      RES[2*INDEX+1]  +=  all_escaped ;                  // esc
 #   else
-      AADD(&(RES[2*INDEX  ]),  A_b*(sum_delta_true/nb_nb)) ; // parentheses!
+      AADD(&(RES[2*INDEX  ]),  Ab*(sum_delta_true/nb_nb)) ; // parentheses!
       AADD(&(RES[2*INDEX+1]),  all_escaped) ;
 #   endif
-#  else  // ELSE NO ALI
       
-#   if 0 // DOUBLE  ... absolutely no effect on optical thin Tex !!
+#  else  // ELSE NO ALI  A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A
+      
+#   if 0 // DOUBLE  ... absolutely no effect on optically thin Tex !!
       for(int ii=c1; ii<=c2; ii++)  {
          wd              =  tmp_tau*profile[ii-shift] ;
          factor          =  1.0f-exp(-wd) ;
@@ -2996,18 +3019,19 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
          sum_delta_true +=  absorbed - escape ;  // later absorbed ~ W*nu*Aul - escape
          // all_escaped    +=  escape ;             // sum of escaping photons over the profile
       }  // over channels
-      w    =   A_b * (  (weight*nu*Aul  + sum_delta_true) / nb_nb )  ;
+      w    =   Ab * (  (weight*nu*Aul  + sum_delta_true) / nb_nb )  ;
 #   else
       for(int ii=c1; ii<=c2; ii++)  {
          w               =  tmp_tau*profile[ii-shift] ;
-         factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+         // factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+         factor          =  1.0f-exp(-w) ;
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell .... tmp_emit=weight*nu*(Aul/tmp_tau)
          absorbed        =  NTRUE[ii]*factor ;   // incoming photons that are absorbed
          NTRUE[ii]      +=  escape-absorbed ;
          sum_delta_true +=  absorbed - escape ;  // later absorbed ~ W*nu*Aul - escape
          // all_escaped    +=  escape ;             // sum of escaping photons over the profile
       }  // over channels
-      w    =   A_b * (  (weight*nu*Aul  + sum_delta_true) / nb_nb )  ;
+      w    =   Ab * (  (weight*nu*Aul  + sum_delta_true) / nb_nb )  ;
 #   endif
       
       // printf("    dx = %7.4f  ... EPS = %.3e\n", dx, EPS) ;
@@ -3019,7 +3043,7 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
       
       // printf("dx = %8.4f  w = %12.4e  w/dx %12.4e  W = %12.4e  BG = %12.4e\n", dx, w, w/dx, RES[INDEX], BG) ;
       
-#  endif
+#  endif // A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-A-
       
       
 # endif  // not CRT
@@ -3100,7 +3124,6 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
          if (POS.z<=ZERO) {   if (LEADING!=5)    POS.z = NZ-EPS ;    } ;
          INDEX = Index(POS) ;
          if (INDEX>=0) {   // new ray started on the opposite side (same work item)
-            // printf("SIDERAY !!!!!!!\n") ;
             for(int ii=0; ii<CHANNELS; ii++) NTRUE[ii] = BG * DIRWEI ;
 # if (BRUTE_COOLING>0)
             float cool = BG*DIRWEI*CHANNELS ;
@@ -3113,6 +3136,14 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
             
          }
       } // if INDEX<0
+      
+      
+# if 0
+      if (id==1) {
+         printf("INDEX %6d   ----- SIJ[0] %12.4e\n", INDEX, RES[0]) ;
+      }
+# endif
+      
       
    } // while INDEX>=0
    
@@ -5911,10 +5942,6 @@ __kernel void UpdateOT3(  //
 
 
 
-
-
-
-
 #if (WITH_OCTREE==40)   // #@
 
 // 40 == one work item per ray
@@ -6554,7 +6581,7 @@ __kernel void PathsOT40(  // @p
       PL[INDEX] += dr ;
 # else
       AADD(&(PL[INDEX]), dr) ;
-#endif      
+# endif      
       
       
       tpl       += dr ;               // just the total value for current idir, ioff
@@ -7383,9 +7410,9 @@ __kernel void UpdateOT40(  // @u
       // AADD(&(RES[INDEX]), w) ;
 #   if (NO_ATOMICS>0)
       RES[INDEX] += w ;
-#  else
+#   else
       AADD((__global float*)(RES+INDEX), w) ;
-#  endif
+#   endif
 #  endif // no ALI *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
       
 # endif  // WITH OR WITHOUT CRT
@@ -8279,7 +8306,7 @@ __kernel void PathsOT4(  // @p
       
       
       dr      =  GetStepOT(&POS, &DIR, &OTL, &OTI, RHO, OFF, PAR, OTLO, NULL, LEADING) ; // step [GL] == root grid units !!
-
+      
 #  if (NO_ATOMICS>0)
       PL[INDEX] += dr ;
 #  else
@@ -10939,3 +10966,6 @@ __kernel void UpdateOT5(  //
 
 
 
+#if (WITH_OVERLAP)
+# include "kernel_update_py_OT_OL.c"
+#endif

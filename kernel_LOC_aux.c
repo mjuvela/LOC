@@ -878,6 +878,14 @@ void __kernel SolveCL(
             tmp += CABU[p]*get_C(TKIN[id], NTKIN, &MOL_TKIN[p*NTKIN], &C[p*NCUL*NTKIN + u*NTKIN]) ;
          }
          MATRIX[IDX(j,i)] = tmp*RHO[id] ;    //  IDX(j,i) = transition j <-- i  == downwards
+#if 0
+         if (id==follow_i) {
+            printf("cell %d  =>  CABU %.3e, get_C %.3e, RHO %.3e\n", id, CABU[0], 
+                   get_C(TKIN[id], NTKIN, &MOL_TKIN[0*NTKIN], &C[0*NCUL*NTKIN + u*NTKIN]),
+                   RHO[id]
+                  ) ;
+         }
+#endif
          // the corresponding UPWARD transition  j -> i
          tmp  *=  (G[i]/G[j]) *  exp(-H_K*(E[i]-E[j])/TKIN[id]) ;
          MATRIX[IDX(i,j)] = tmp*RHO[id] ;    //  IDX(j,i) = transition j <-- i
@@ -901,14 +909,17 @@ void __kernel SolveCL(
 #else // not ALI
    for(int t=0; t<TRANSITIONS; t++)  MATRIX[IDX(UL[2*t+1], UL[2*t])]  +=  A[t] ;
 #endif
-   
+
+     
    
    // --- NI is no longer used so we can reuse it to store vector X below ---
    for(int t=0; t<TRANSITIONS; t++) {
       u = UL[2*t] ;   l = UL[2*t+1] ;
       MATRIX[IDX(u,l)]  +=  SIJ[id*TRANSITIONS+t]               / volume ;
       MATRIX[IDX(l,u)]  +=  SIJ[id*TRANSITIONS+t] * (G[l]/G[u]) / volume ;   //  /= GG  == G[l]/G[u]
-   }   
+   }
+      
+      
    for(int i=0; i<LEVELS-1; i++) {  // loop over columns
       tmp = 0.0f ;
       for(int j=0; j<LEVELS; j++)  tmp +=  MATRIX[IDX(j,i)] ;  // sum over column
@@ -916,6 +927,7 @@ void __kernel SolveCL(
    }
    for(int i=0; i<LEVELS; i++)  MATRIX[IDX(LEVELS-1, i)]  = -MATRIX[IDX(0,0)] ;
    for(int i=0; i<LEVELS; i++)  VECTOR[i] = 0.0f ;
+          
    
    // one cannot drop ABU from here or the solution fails for test_3d_ot.py
    // ... but it will also fail if RHO*ABU scaling is kept and ABU is extremely small!!
@@ -938,7 +950,8 @@ void __kernel SolveCL(
    
    
 #if 0
-   if (id==follow_i) {
+   printf("\n") ;
+   if (id==100) {
       for(int j=0; j<LEVELS; j++) {      // row
          for(int i=0; i<LEVELS; i++) {   // column
             printf(" %10.3e", MATRIX[IDX(j,i)]) ;
@@ -963,6 +976,25 @@ void __kernel SolveCL(
       printf("\n") ;
    }
 #endif
+   
+#if 0
+   if (id==9310) {
+      printf("CELL 100:\n") ;
+      for(int j=0; j<LEVELS; j++) {      // row
+         for(int i=0; i<LEVELS; i++) {   // column
+            printf(" %10.3e", MATRIX[IDX(j,i)]) ;
+         }
+         printf("\n") ;
+      }
+      printf("\nright side  0,0, ..., %.4e, RHO=%.3e, ABU=%.3e\n", VECTOR[LEVELS-1], RHO[id], ABU[id]) ;
+      for(int i=0; i<LEVELS; i++) printf("%12.4e ", B[i]) ;
+      printf("\n") ;
+   }
+#endif
+   
+   
+   
+   
 }
 
 

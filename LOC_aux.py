@@ -252,6 +252,7 @@ class MoleculeO:
                 print("  %2d -> %2d   F= %12.4e   E= %12.4e   A= %12.4e" % (u, l, self.F[t], self.E[u], self.A[t]))
             print(self.CUL[0])
             print(self.CC[0])
+            print("CABU ", self.CABU)
             sys.exit()
             
         
@@ -274,7 +275,7 @@ class MoleculeO:
             self.GG[tr] = self.G[u]/self.G[l]
         # B
         self.B  =   asarray(  self.A*C_LIGHT*C_LIGHT/(2.0*PLANCK*double(self.F)**3.0) , float32 )
-        # BB
+        # BB  =   GG *  B *  h*f / (4*pi)  =   Blu * h*f/(4*pi)
         self.BB = self.GG * self.A * (C_LIGHT/self.F)**2.0 / (8.0*pi)
 
 
@@ -343,6 +344,7 @@ def Planck(F, T):
 def ReadIni(filename):
     global PLANCK
     INI = {
+    'prefix'          : 'prefix',            #  prefix for output files
     'nside'           : 1,                   #  Healpix NSIDE parameter, to generate ray directions
     'Tex'             : [],                  #  save excitation temperatures for listed transitions
     'spectra'         : [],                  #  save spectra for listed transitions
@@ -417,7 +419,7 @@ def ReadIni(filename):
         INI['keys'].append(s[0])
         
         if ((s[0].find('mapview')>=0)&(len(s)>=5)): # at least  theta, phi, nx, ny  -- optionally (xc, yc, zc)
-            print("mapview, len(s)=%d" % (len(s)), s)
+            # print("mapview, len(s)=%d" % (len(s)), s)
             tmp =  [ float(s[1])*pi/180.0, float(s[2])*pi/180.0,  int(s[3]), int(s[4]) ]  #   theta, phi, NX, NY map parameters
             try:
                 mc = [ float(s[5]), float(s[6]), float(s[7]) ]          #   map centre (xc, yc, zc)
@@ -435,6 +437,15 @@ def ReadIni(filename):
                 if (s[0].find('directi')==0):  INI.update({'direction':   [a*pi/180.0, b*pi/180.0]})
             except:
                 pass        
+            
+            
+        if (s[0].lower().find("fits")==0): # 0 or 2 arguments
+            INI['FITS'] = 1 
+            if (len(s)>2):
+                INI['FITS_RA'] = float(s[1])
+                INI['FITS_DE'] = float(s[2])
+            
+                
         if (len(s)>1): # keywords with one argument
             # spectra and transitions have several int arguments
             if ((s[0].find('spectra')==0)|(s[0].lower().find('tex')==0)|(s[0].find('transition')==0)):
@@ -461,11 +472,6 @@ def ReadIni(filename):
                 else:                     INI['octree'] = 4 #  0 -> 4, default changed 2021-03-14
                 print("*** OCTREE %d ***" % INI['octree'])
                 
-            if (s[0].lower().find("fits")==0):     
-                INI['FITS'] = 1 
-                if (len(s)>2):
-                    INI['FITS_RA'] = float(s[1])
-                    INI['FITS_DE'] = float(s[2])
                 
             if (s[0].find('cloud')==0):   INI.update({'cloud':    s[1]})
             if (s[0].find('molec')==0):   INI.update({'molecule': s[1]})
@@ -1071,11 +1077,11 @@ def GetHealpixDirection(nside, ioff, idir, X, Y, Z, offs=1,  DOUBLE_POS=False, t
                     offs=1 => ioff=0:4,    offs=2 => ioff=0:16
     """
     if (DOUBLE_POS):
-        POS   =  cl.cltypes.make_double3()
+        POS   =  cl.cltypes.make_double3(0.0, 0.0, 0.0)
         ## DIR   =  cl.cltypes.make_double3()
     else:
-        POS   =  cl.cltypes.make_float3()
-    DIR   =  cl.cltypes.make_float3()
+        POS   =  cl.cltypes.make_float3(0.0, 0.0, 0.0)
+    DIR   =  cl.cltypes.make_float3(0.0, 0.0, 0.0)
     
     
     if (nside==0):  # mostly for debugging -- only the six cardinal directions
@@ -1262,9 +1268,11 @@ class BandO:
 class OLBandO:
     BANDS  =    0   # number of frequency bands (with possibly multiple components)
     NCMP   =    []  # number of components in each band
+    NCHN   =    []  # number of channels in the full band
     TRAN   =    []  # list of transitions in each band
     FMIN   =    []  # minimum transition frequency in the band
     FMAX   =    []  # maximum transition frequency in the band
+    COFF   =    []  # shift in channels (float)
     DV     =    0.0 # channel width
 
     def Init(self, dv):
@@ -1280,8 +1288,10 @@ class OLBandO:
     def AddBand(self, components):
         self.TRAN.append( zeros(components, int32) )
         self.NCMP.append( 0 )
+        self.NCHN.append( 0 )
         self.FMIN.append( 1.0e30 )
         self.FMAX.append( 0.0    )
+        self.COFF.append( zeros(components, float32) )
         self.BANDS += 1
         
     def AddTransition(self, tran, freq):
@@ -1295,8 +1305,8 @@ class OLBandO:
         return self.TRAN[iband][icmp]
     
     def Channels(self, iband):
-        # Return NCHN = the number of extra channels needed
-        return 0
+        # Return NCHN = the number of extra needed
+        return self.NCHN[iband]
 
 
     
@@ -1406,6 +1416,12 @@ def ReadOverlap(filename, mol, width, transitions, channels):
     Read file describing overlapping transitions:
         # components
         { upper lower}
+    OLBAND contains all bands, each containing >1 components
+    OLBAND.BANDS          = number of bands
+    OLBAND.NCMP[iband]    = number of components in band iband
+    OLBAND.NCHN[iband]    = number of channels for the band iband
+    OLBAND.TRAN[iband]    = array of transition numbers for band iband
+    OLBAND.COFF[iband]    = offsets in channels for components in band iband
     """
     lines  = open(filename, 'r').readlines()
     OLBAND = OLBandO()
@@ -1427,20 +1443,32 @@ def ReadOverlap(filename, mol, width, transitions, channels):
     #
     MAXCMP = 0
     OLTRAN  =  zeros(transitions, int32)
-    OLOFF   =  zeros(transitions, float32)
+    OLOFF   =  zeros(transitions, float32) 
     for iband in range(OLBAND.Bands()):
-        nchn   = OLBAND.Channels(iband) + channels
         ncmp   = OLBAND.Components(iband)
         MAXCMP = max([MAXCMP, ncmp])
-        print("iband %d/%d,  %d components, %d channels" % (iband, OLBAND.Bands(), ncmp, nchn))
         f0     = mol.F[OLBAND.GetTransition(iband, 0)]
         for icmp in range(ncmp):  #   ncmp <= transitions
             OLTRAN[icmp]  =  OLBAND.GetTransition(iband, icmp)
             freq          =  mol.F[OLBAND.GetTransition(iband, icmp)]
-            off           =  0.5*(nchn-1.0)-0.5*(channels-1.0)-(freq-f0)*(C_LIGHT/f0)*1.0e-5/width
-            print("  %.1f %.1f %.1f" % (0.5*(nchn-1.0), 0.5*(channels-1.0), (freq-f0)*(C_LIGHT/f0)*1.0e-5/width))
-            print("   icmp %2d, transition %3d, offset %5.1f" % (icmp, OLBAND.GetTransition(iband, icmp), off))
-    ####
+            # set OLBAND.COFF = shift in channels for each component, negative = shift left
+            OLBAND.COFF[iband][icmp] = (f0-freq)*(2.9979245e5)/f0/width
+        # reset COFF so that first transition is in the centre of the full band
+        nchn   =  int((max(OLBAND.COFF[iband])-min(OLBAND.COFF[iband])) + channels)
+        delta  =  (nchn-1)/2.0 - 0.5*(min(OLBAND.COFF[iband])+max(OLBAND.COFF[iband])) - 0.5*channels
+        OLBAND.COFF[iband] += delta+0.5  # ???
+        OLBAND.NCHN[iband] =  nchn
+    if (0):
+        print("OLBAND: ", OLBAND)
+        print("BANDS : ", OLBAND.BANDS)
+        print("NCMP  : ", OLBAND.NCMP)
+        print("NCHN  : ", OLBAND.NCHN)
+        print("TRAN  : ", OLBAND.TRAN)
+        print("FMIN  : ", OLBAND.FMIN)
+        print("FMAX  : ", OLBAND.FMAX)
+        print("COFF  : ", OLBAND.COFF)
+        print("DV    : ", OLBAND.DV)        
+        sys.exit()
     return OLBAND, OLTRAN, OLOFF, MAXCMP
 
 
