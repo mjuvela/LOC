@@ -2401,7 +2401,7 @@ __kernel void UpdateHF4(  // @h
          NTRUE[i]     =  NTRUE[i]*exp(-Ttau) + Dleave + Lleave ;
       }  // loop over channels
       // RES[2*INDEX]    += sij ;            // division by VOLUME done in the solver (kernel)
-      // RES[2*INDEX+1]  += all_escaped ;    // divided by VOLUME only oin Solve() !!!
+      // RES[2*INDEX+1]  += all_escaped ;    // divided by VOLUME only in Solve() !!!
 #   if (NO_ATOMICS>0)
       RES[2*INDEX  ]  +=  sij ;
       RES[2*INDEX+1]  +=  all_escaped) ;

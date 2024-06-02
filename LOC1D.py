@@ -250,24 +250,26 @@ PARTNERS = MOL.PARTNERS
 print("Molecule has %d collisional partners" % PARTNERS)
 print("MOL", MOL)
 print(MOL.CABU)
-CAB  =  zeros((CELLS, PARTNERS), float32)
+CABU          =  zeros((CELLS, PARTNERS), float32)
+CABU_PER_CELL = False
 if (len(INI['cabfile'])>1):
     # We provide arrays for the abundance of each collisional partner
     try:
-        CAB = fromfile(INI['cabfile'], float32).reshape(CELLS, PARTNERS)
+        CABU = fromfile(INI['cabfile'], float32).reshape(CELLS, PARTNERS)
     except:
         print("Error reading abundances of collisional partners: %s" % INI['cabfile'])
         sys.exit()
+    CABU_PER_CELL = True
 else: # default abundances from MOL
     for i in range(PARTNERS):
         # Note: sum of PartnerAbundance() over all collisional partners is 1.0
         cab = MOL.CABU[i]
         print("   COLLISIONAL PARTNER ABUNDANCE: %5s  %10.3e" % (MOL.PNAME[i], MOL.CABU[i]))
-        CAB[:,i] = cab
-
+        CABU[:,i] = cab
+# CABU is always CABU[CELLS, PARTNERS]
 for i in range(PARTNERS):
     print("  1-0   partner %d  %10s  ---  C[0] = %10.3e   ABU[0] = %10.3e" % \
-           (i, MOL.PNAME[i], MOL.C(1, 0, 10.0, i), CAB[0*PARTNERS,i]))
+           (i, MOL.PNAME[i], MOL.C(1, 0, 10.0, i), CABU[0,i]))
 # MOL.GenericDump()
    
 
@@ -493,6 +495,7 @@ S_ESC_buf  =  cl.Buffer(context, mf.READ_ONLY,  4*BATCH*TRANSITIONS)
 S_PC_buf   =  cl.Buffer(context, mf.READ_ONLY,  4*BATCH)
 S_NI_buf   =  cl.Buffer(context, mf.READ_ONLY,  4*BATCH*LEVELS)
 S_RES_buf  =  cl.Buffer(context, mf.WRITE_ONLY, 4*BATCH*LEVELS)
+S_CABU_buf =  cl.Buffer(context, mf.WRITE_ONLY, 4*BATCH*PARTNERS)
 # molecule basic data
 MOL_A_buf  = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.A)
 MOL_UL_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.TRANSITION)
@@ -527,10 +530,11 @@ for i in range(PARTNERS):
     C[i, :, :]  =  MOL.CC[i][:, :]
 MOL_C_buf  = cl.Buffer(context, mf.READ_ONLY, C.nbytes)
 cl.enqueue_copy(queue, MOL_C_buf, C)
-# abundance of collisional partners
-MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.CABU)    
-
-    
+# abundance of collisional partners -- constant over cells, MOL.CABU[partners]
+# MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.CABU)    
+# abundances of collisional partnes -- for each cell separately
+# MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY, 4*PARTNERS*CELLS)
+# cl.enqueue_copy(queue, MOL_CABU_buf, CAB)  # always [CELLS, PARTNERS]
 
 # kernel_clear -- to zero the SIJ and ESC arrays on the device side
 if (OVERLAP):
@@ -947,17 +951,8 @@ def Solve(INI, MOL):
     #  instead we have SIJ scaled with PATH_CORRECTION
     global LEVELS, TKIN, RHO, ABU, ESC_ARRAY, PATH_CORRECTION, SIJ_ARRAY, NI_ARRAY
     CHECK     = min([INI['uppermost']+1, LEVELS])  # check this many lowest energylevels
-    cab       = ones(10, float32)                  # scalar abundances of different collision partners
-    for i in range(PARTNERS):
-        cab[i] = MOL.CABU[i]                       # default values == 1.0
+    cab       = MOL.CABU.copy()
     # possible abundance file for abundances of all collisional partners
-    CABFP = None
-    if (len(INI['cabfile'])>0): # we have a file with abundances for each collisional partner
-        CABFP = open(INI['cabfile'], 'rb')
-        tmp   = fromfile(CABFP, int32, 4)
-        if ((tmp[0]!=X)|(tmp[1]!=Y)|(tmp[2]!=Z)|(tmp[3]!=PARTNERS)):
-            print("*** ERROR: CABFILE has dimensions %d x %d x %d, for %d partners" % (tmp[0], tmp[1], tmp[2], tmp[3]))
-            sys.exit()            
     real      =  float64
     MATRIX    =  zeros((LEVELS, LEVELS), real)
     VECTOR    =  zeros(LEVELS, real)
@@ -969,8 +964,8 @@ def Solve(INI, MOL):
     else:
         constant_tkin = False
     if (constant_tkin):
-        if (CABFP):
-            print("Cannot have variable CAB if Tkin is assumed to be constant")
+        if (CABU_PER_CELL):
+            print("Cannot have variable CABU if Tkin is assumed to be constant")
         COMATRIX = zeros((LEVELS, LEVELS), real)
         tkin     = TKIN[1]
         for iii in range(LEVELS):
@@ -994,8 +989,6 @@ def Solve(INI, MOL):
         if (constant_tkin):
             MATRIX[:,:] = COMATRIX[:,:] * rho 
         else:
-            if (CABFP):
-                cab = fromfile(CABFP, float32, PARTNERS)   # abundances for current cell, cab[PARTNERS]
             for iii in range(LEVELS):
                 for jjj in range(LEVELS):
                     if (iii==jjj):
@@ -1006,7 +999,7 @@ def Solve(INI, MOL):
                         else:
                             gamma = 0.0e0
                             for ip in range(PARTNERS):
-                                gamma += cab[ip] * MOL.C(iii, jjj, tkin, ip)
+                                gamma += CABU[icell, ip] * MOL.C(iii, jjj, tkin, ip)
                         MATRIX[jjj, iii] = gamma*rho
         if (len(ESC_ARRAY)>0):
             for t in range(TRANSITIONS):
@@ -1082,11 +1075,14 @@ def SolveCL(INI, MOL):
     """
     Solve equilibrium equations on the device. We do this is batches, perhaps 10000 cells
     at a time => could be up to GB of device memory. 
+    2024-05-31:
+        - added S_CABU_buf[BATCH, PARTNERS]
     """
     global NI_buf, PL_buf, CELLS, queue, kernel_solve, PL_buf, RES_buf, CELLS, LEVELS, TRANSITIONS
     global RHO, TKIN, ABU, PARTNERS, NTKIN, NCUL, SIJ_ARRAY, ESC_ARRAY
-    global S_WRK_buf, S_RHO_buf, S_TKIN_buf, S_ABU_buf, S_SIJ_buf, S_ESC_buf, S_PC_buf, S_NI_buf, S_RES_buf
-    global MOL_A_buf, MOL_UL_buf, MOL_E_buf, MOL_G_buf, MOL_TKIN_buf, MOL_CUL_buf, MOL_C_buf, MOL_CABU_buf
+    global S_WRK_buf, S_RHO_buf, S_TKIN_buf, S_ABU_buf, S_SIJ_buf, S_ESC_buf, S_PC_buf, S_NI_buf, S_RES_buf, S_CABU_buf
+    global MOL_A_buf, MOL_UL_buf, MOL_E_buf, MOL_G_buf, MOL_TKIN_buf, MOL_CUL_buf, MOL_C_buf
+    # , MOL_CABU_buf
     t00                = time.time()
     # new buffer for matrices and the right side of the equilibriumm equations
     CHECK              =  min([INI['uppermost']+1, LEVELS])  # check this many lowest energylevels
@@ -1108,7 +1104,8 @@ def SolveCL(INI, MOL):
                 sys.stdout.write(" %10.3e" % SIJ_ARRAY[icell,t])
             sys.stdout.write("\n")
     # sys.exit()
-        
+
+    # why in batches? .... perhaps because possibility of a high number of transitions => lots of memory for coefficient matrices
     for ibatch in range(1+CELLS//BATCH):
         a     = ibatch*BATCH
         b     = min([a+BATCH, CELLS])
@@ -1123,10 +1120,12 @@ def SolveCL(INI, MOL):
         cl.enqueue_copy(queue, S_SIJ_buf,  SIJ_ARRAY[a:b,:].copy())
         cl.enqueue_copy(queue, S_ESC_buf,  ESC_ARRAY[a:b,:].copy())
         cl.enqueue_copy(queue, S_PC_buf,   PATH_CORRECTION[a:b].copy())
+        cl.enqueue_copy(queue, S_ESC_buf,  ESC_ARRAY[a:b,:].copy())
+        cl.enqueue_copy(queue, S_CABU_buf, CABU[a:b,:].copy())       # [BATCH, PARTNERS]
         # solve
         kernel_solve(queue, [GLOBAL_SOLVE,], [LOCAL,], batch, 
         MOL_A_buf, MOL_UL_buf,  MOL_E_buf, MOL_G_buf, PARTNERS, NTKIN, NCUL,   
-        MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, MOL_CABU_buf,
+        MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, S_CABU_buf,
         S_RHO_buf, S_TKIN_buf, S_ABU_buf,  S_NI_buf, S_SIJ_buf, S_ESC_buf,  S_RES_buf,  S_WRK_buf, S_PC_buf)
         cl.enqueue_copy(queue, res, S_RES_buf)
         # delta = for each cell, the maximum level populations change among levels 0:CHECK

@@ -509,7 +509,7 @@ void __kernel SolveCL(const int         BATCH,         //  0 number of cells per
                       __global float   *MOL_TKIN,      //  8 MOL_TKIN[PARTNERS, NTKIN]
                       __global int     *CUL,           //  9 CUL[PARTNERS, NCUL, 2]
                       __global float   *C,             // 10 C[PARTNERS, NCUL, NTKIN]
-                      __global float   *CABU,          // 11 CAB[PARTNERS]  --- no spatial variation yet
+                      __global float   *CABU,          // 11 CAB[BATCH, PARTNERS]  --- now with spatial variation
                       __global float   *RHO,           // 12 RHO[BATCH]
                       __global float   *TKIN,          // 13 TKIN[BATCH]
                       __global float   *ABU,           // 14  ABU[BATCH]
@@ -542,7 +542,7 @@ void __kernel SolveCL(const int         BATCH,         //  0 number of cells per
          }
          tmp = 0.0 ;
          for(int p=0; p<PARTNERS; p++) { // get_C has the correct row from C, NTKIN element vector DOWNWARDS !!
-            tmp += CABU[p]*get_C(TKIN[id], NTKIN, &MOL_TKIN[p*NTKIN], &C[p*NCUL*NTKIN + u*NTKIN]) ;
+            tmp += CABU[id*PARTNERS+p]*get_C(TKIN[id], NTKIN, &MOL_TKIN[p*NTKIN], &C[p*NCUL*NTKIN + u*NTKIN]) ;
          }
          MATRIX[IDX(j,i)]  =  (float)tmp * RHO[id] ;    //  IDX(j,i) = transition j <-- i  == downwards
          MATRIX[IDX(i,j)]  =  (float)tmp * RHO[id] * (G[i]/G[j])* exp(-H_K*(E[i]-E[j])/TKIN[id]) ; // upwards

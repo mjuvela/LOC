@@ -404,7 +404,7 @@ def ReadIni(filename):
     'KILL_EMISSION'   :  999999,             #  write spectra ignoring emission from cells >= KILL_EMISSION, 1D models only!!
     'minmaplevel'     : -1,                  #  only hierarky levels level>minmaplevel used in map calculation
     'MAP_INTERPOLATION': -1,                 #  spatial interpolation in map making
-    'FITS'            :  0,                  #  if >0, save spectra and tau as FITS images
+    'FITS'            :  1,                  #  if >0, save spectra and tau as FITS images
     'FITS_RA'         :  0.0,                #  centre coordinates (deg) of FITS maps
     'FITS_DE'         :  0.0,                #
     'verbose'         :  1,
@@ -440,7 +440,9 @@ def ReadIni(filename):
             
             
         if (s[0].lower().find("fits")==0): # 0 or 2 arguments
-            INI['FITS'] = 1 
+            INI['FITS'] = 1
+            if (len(s)==1):                # one can also switch FITS off
+                INI['FITS'] = int(s[1])
             if (len(s)>2):
                 INI['FITS_RA'] = float(s[1])
                 INI['FITS_DE'] = float(s[2])

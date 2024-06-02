@@ -585,8 +585,8 @@ for i in range(PARTNERS):
     C[i, :, :]  =  MOL.CC[i][:, :]
 MOL_C_buf  = cl.Buffer(context, mf.READ_ONLY, 4*PARTNERS*NCUL*NTKIN)
 cl.enqueue_copy(queue, MOL_C_buf, C)        
-# abundance of collisional partners
-MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.CABU)    
+# abundance of collisional partners,  MOL.CABU[PARTNERS]
+# MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.CABU)    
 # new buffer for matrices and the right side of the equilibriumm equations
 BATCH        =  max([1,CELLS//max([LEVELS, TRANSITIONS])]) # now ESC, SIJ fit in NI_buf
 BATCH        =  min([BATCH, CELLS, 16384])        #  16384*100**2 = 0.6 GB
@@ -600,6 +600,7 @@ SOL_ABU_buf  = cl.Buffer(context, mf.READ_ONLY,  4*BATCH)
 SOL_SIJ_buf  = cl.Buffer(context, mf.READ_ONLY,  4*BATCH*TRANSITIONS)
 SOL_ESC_buf  = cl.Buffer(context, mf.READ_ONLY,  4*BATCH*TRANSITIONS)
 SOL_NI_buf   = cl.Buffer(context, mf.READ_ONLY,  4*BATCH*LEVELS)
+SOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY,  4*BATCH*PARTNERS)   #  2024-06-02
 
 
 if (WITH_CRT):
@@ -2026,8 +2027,8 @@ def SolveCL():
     global NI_buf, CELLS, queue, kernel_solve, RES_buf, VOLUME, CELLS, LEVELS, TRANSITIONS, MOL
     global RHO, TKIN, ABU
     global MOL_A_buf, MOL_UL_buf, MOL_E_buf, MOL_G_buf
-    global MOL_TKIN_buf, MOL_CUL_buf, MOL_C_buf, MOL_CABU_buf   
-    global SOL_WRK_buf, SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf, SOL_NI_buf
+    global MOL_TKIN_buf, MOL_CUL_buf, MOL_C_buf ## , MOL_CABU_buf   
+    global SOL_WRK_buf, SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf, SOL_NI_buf, SOL_CABU_buf
     global SOL_SIJ_buf, SOL_ESC_buf, OCTREE, BATCH
     # TKIN
     for i in range(1, PARTNERS):
@@ -2041,7 +2042,19 @@ def SolveCL():
     ave_max_change     = 0.0
     global_max_change  = 0.0
 
-    
+    CABU  = zeros((BATCH, PARTNERS), float32)
+    CABFP = None
+    if (len(INI['cabfile'])>0): # we have a file with abundances of each collisional partner
+        CABFP = open(INI['cabfile'], 'rb')   #  [CELLS, PARTNERS]
+        tmp   = np.fromfile(CABFP, int32, 4)
+        if ((tmp[0]!=NX)|(tmp[1]!=NY)|(tmp[2]!=NZ)|(tmp[3]!=PARTNERS)):
+            print("*** ERROR: CABFILE has dimensions %d x %d x %d, for %d partners" % (tmp[0], tmp[1], tmp[2], tmp[3]))
+            sys.exit()            
+    else:                      # same abundances of collisional partners in every cell, copy from MOL.CABU to CABU
+        for p in range(PARTNERS):
+            CABU[:,p] = MOL.CABU[p]
+        cl.enqueue_copy(queue, SOL_CABU_buf, CABU)
+            
     if (OCTREE>0):
         # follow_ind = 13965
         follow_ind =   -1
@@ -2083,12 +2096,16 @@ def SolveCL():
                 cl.enqueue_copy(queue, SOL_ABU_buf,  ABU[a:b].copy())
                 cl.enqueue_copy(queue, SOL_NI_buf,   NI_ARRAY[a:b,:].copy())   # PL[CELLS] ~ NI[BATCH, LEVELS]
                 cl.enqueue_copy(queue, SOL_SIJ_buf,  SIJ_ARRAY[a:b,:].copy())
+                if (CABFP!=None):  # read abundances of collisional partners, b-a cells
+                    CABFP.seek(4*4+a*PARTNERS)   # 4 ints + CELLS*PARTNERS
+                    CABU[0:(b-a),:] = fromfile(CABFP, float32, (b-a)*PARTNERS).reshape(b-a, PARTNERS)
+                    cl.enqueue_copy(queue, SOL_CABU_buf, CABU)
                 if (WITH_ALI>0):
                     cl.enqueue_copy(queue, SOL_ESC_buf,  ESC_ARRAY[a:b,:].copy())
                 # solve
                 kernel_solve(queue, [GLOBAL_SOLVE,], [LOCAL,], ilevel, batch, 
                 MOL_A_buf, MOL_UL_buf,  MOL_E_buf, MOL_G_buf, PARTNERS, NTKIN, NCUL,   
-                MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, MOL_CABU_buf,
+                MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, SOL_CABU_buf, # MOL_CABU_buf,
                 SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf,  SOL_NI_buf, SOL_SIJ_buf, SOL_ESC_buf,  
                 RES_buf, SOL_WRK_buf, debug_i)   # was follow_ind, should be debug_i ???
                 cl.enqueue_copy(queue, res, RES_buf)
@@ -2139,7 +2156,6 @@ def SolveCL():
         #sys.exit()
             
             
-            
     else:
         
         for ibatch in range(CELLS//BATCH+1):
@@ -2154,6 +2170,10 @@ def SolveCL():
             cl.enqueue_copy(queue, SOL_ABU_buf,  ABU[a:b].copy())
             cl.enqueue_copy(queue, SOL_NI_buf,   NI_ARRAY[a:b,:].copy())   # PL[CELLS] ~ NI[BATCH, LEVELS]
             cl.enqueue_copy(queue, SOL_SIJ_buf,  SIJ_ARRAY[a:b,:].copy())
+            if (CABFP!=None):  # read abundances of collisional partners, b-a cells
+                CABFP.seek(4*4+a*PARTNERS)   # 4 ints + CELLS*PARTNERS
+                CABU[0:(b-a),:] = fromfile(CABFP, float32, (b-a)*PARTNERS).reshape(b-a, PARTNERS)
+                cl.enqueue_copy(queue, SOL_CABU_buf, CABU)
             if (WITH_ALI>0):
                 cl.enqueue_copy(queue, SOL_ESC_buf,  ESC_ARRAY[a:b,:].copy())
             # solve
@@ -2169,6 +2189,8 @@ def SolveCL():
             NI_ARRAY[a:b,:]   =  res[0:batch]
     ave_max_change /= CELLS
     print("      SolveCL    AVE %10.3e    MAX %10.3e" % (ave_max_change, global_max_change))
+    
+    if (CABFP): CABFP.close()
     
     if (1):
         mbad = nonzero(~isfinite(sum(SIJ_ARRAY, axis=1)))
