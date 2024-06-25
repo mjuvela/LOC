@@ -2179,7 +2179,7 @@ def SolveCL():
             # solve
             kernel_solve(queue, [GLOBAL_SOLVE,], [LOCAL,], batch, 
             MOL_A_buf, MOL_UL_buf,  MOL_E_buf, MOL_G_buf,        PARTNERS, NTKIN, NCUL,   
-            MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, MOL_CABU_buf,
+            MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, SOL_CABU_buf,
             SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf,  SOL_NI_buf, SOL_SIJ_buf, SOL_ESC_buf,  RES_buf, SOL_WRK_buf, -1)
             cl.enqueue_copy(queue, res, RES_buf)
             # delta = for each cell, the maximum level populations change amog levels 0:CHECK
