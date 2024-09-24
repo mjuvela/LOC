@@ -287,11 +287,11 @@ platform, device, context, queue,  mf = InitCL(INI['GPU'], INI['platforms'])
 OPT = "-D NRAY=%d -D CHANNELS=%d -D WIDTH=%.5ff -D CELLS=%d -D LOCAL=%d -D GLOBAL=%d -D LEVELS=%d \
 -D TRANSITIONS=%d -D GNO=%d -D SIGMA0=%.5ff -D SIGMAX=%.4ff -D GL=%.4e -D COOLING=%d -D NRAY_SPE=%d \
 -D DOUBLE_COOL=%d -D WITH_CRT=%d -D NWG=%d -D MAXCMP=%d -D MAXCHN=%d -D BGSUB=1 -D LOWMEM=%d \
--D WITH_ALI=%d  -D SAVETAU=%d -D KILL_EMISSION=%d" % \
+-D WITH_ALI=%d  -D SAVETAU=%d -D KILL_EMISSION=%d -D NSIDE=%d" % \
 (NRAY, CHANNELS, WIDTH, CELLS, LOCAL, GLOBAL, LEVELS, 
 TRANSITIONS, GNO, SIGMA0, SIGMAX, GL, COOLING, NRAY_SPE,
 DOUBLE_COOL, WITH_CRT, NWG, MAXCMP, MAXCHN, INI['lowmem'], INI['WITH_ALI'], INI['tausave'],
-INI['KILL_EMISSION'])
+INI['KILL_EMISSION'], INI['nside'])
 
 print("GLOBAL %d, GLOBAL_SUM %d, LOCAL %d, CELLS %d" % (GLOBAL, GLOBAL_SUM, LOCAL, CELLS))
 print(OPT)
@@ -413,6 +413,24 @@ else:
         kernel_spe.set_scalar_arg_dtypes([None,None,np.float32,None,np.float32,np.float32,
         None,None,None,None,None,None, np.int32])
 
+
+kernel_escape, RC_bug, THETA_buf, PHI_buf = None, None, None, None
+if (INI['escape']>0):
+    kernel_escape = program.Escape
+    #                                    CLOUD  GAU    GN          NI    BG   
+    kernel_escape.set_scalar_arg_dtypes([None,  None,  np.float32, None, np.float32,
+    # emis0     IP    SteP  NTRUE SUM_TAU RHO   COLDEN  RC    THETA PHI
+    np.float32, None, None, None, None,   None, None,   None, None, None])        
+    # directions from Healpix
+    npix  = 12*INI['nside']**2
+    THETA, PHI = zeros(npix, float32),  zeros(npix, float32)
+    for ipix in range(npix):
+        THETA[ipix], PHI[ipix] = Pixel2AnglesRing(INI['nside'], ipix)
+    RC_buf     =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=RADIUS)
+    THETA_buf  =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=THETA)
+    PHI_buf    =  cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=PHI)
+
+        
         
 kernel_solve.set_scalar_arg_dtypes(
 # 0        1     2     3     4     5         6         7         8     9     10    11   
@@ -898,7 +916,28 @@ def WriteSpectra(tran, prefix, savetau=0):
         if (INI['pickle']):
             pickle.dump(INI,fp)
         fp.close()
-
+    # ---------------------------------------------------------------------------------------------------
+    # Escape probabilities vs radius, same offsets as for the spectra
+    # if (tran!=1): return 
+    if (INI['escape']>0):
+        kernel_escape(queue, [GLOBAL_SPE,], [LOCAL,], CLOUD_buf, GAU_buf, A_gauss_norm, NI_buf, BG, 
+        emissivity, IP_buf, STEP_buf, NTRUE_SPE_buf, STAU_buf, RHO_buf, COLDEN_buf, 
+        RC_buf, THETA_buf, PHI_buf) 
+        ###
+        tmp    =  zeros(NRAY_SPE, cl.cltypes.float4)
+        cl.enqueue_copy(queue, tmp, COLDEN_buf)       
+        # COLDEN[NRAY_SPE, 4]  =  { nu, beta, ?, ? }
+        #  save relative emission per unit volume, relative emission per ip, beta
+        r   =  IP*GL
+        jV  =  tmp[:]['x']/sum(tmp[:]['x'])   # relative emission per unit volume
+        jR  =  jV*IP**2
+        jR /=  sum(jR)                        # relative emission per impact parameter
+        fp  =  open('%s.esc' % prefix, 'w')
+        fp.write("# radius,  j/volume,  j/impact_parameter, beta=escape_probability\n") ;
+        for i in range(NRAY_SPE):
+            fp.write('%12.4e    %12.4e  %12.4e   %12.4e\n' % (r[i], jV[i], jR[i], tmp[i]['y']))
+        fp.close()
+    # ---------------------------------------------------------------------------------------------------
         
 
 
@@ -1129,7 +1168,7 @@ def SolveCL(INI, MOL):
         S_RHO_buf, S_TKIN_buf, S_ABU_buf,  S_NI_buf, S_SIJ_buf, S_ESC_buf,  S_RES_buf,  S_WRK_buf, S_PC_buf)
         cl.enqueue_copy(queue, res, S_RES_buf)
         # delta = for each cell, the maximum level populations change among levels 0:CHECK
-        delta             =  np.max((res[0:batch,0:CHECK] - NI_ARRAY[a:b,0:CHECK]) / NI_ARRAY[a:b,0:CHECK], axis=1)
+        delta             =  abs(np.max((res[0:batch,0:CHECK] - NI_ARRAY[a:b,0:CHECK]) / NI_ARRAY[a:b,0:CHECK], axis=1))
         global_max_change =  max([global_max_change, max(abs(delta))])
         ave_max_change   +=  np.sum(delta)
         NI_ARRAY[a:b,:]   =  res[0:batch,:]                        
@@ -1184,7 +1223,7 @@ for ITER in range(NITER):
         asarray(NI_ARRAY, float32).tofile(fp)
         fp.close()
         Tsav += Seconds()        
-    if (max_change<INI['stop']): break
+    if ((ITER>1)&(max_change<INI['stop'])): break
 print("*** SIMULATION %.3f,  SOLVE %.3f,  SAVE %.3f SECONDS" % (Tsim, Tsol, Tsav))
 
 # EXCITATION TEMPERATURES
@@ -1203,7 +1242,7 @@ for i in range(len(INI['Tex'])//2):                # save Tex
 # We use NRAY_SPE equidistant rays, not the original NRAY that were used in the simulation
 # Because of device allocations, NRAY_SPE <= NRAY, recompute STEP[], APL[] is not used
 # NO --- NRAY_SPE will be allowed to be larger  (STEP_buf and IP_buf allocated for the maximum of NRAY and NRAY_SPE)
-IP     =  asarray(arange(NRAY_SPE)*1.0/(NRAY_SPE-1.0), float32)  # first at the centre, the last on the outer border
+IP     =  asarray(0.9999*arange(NRAY_SPE)*1.0/(NRAY_SPE-1.0), float32)  # first at the centre, the last on the outer border
 STEP   =  GetSteps1D(CELLS, RADIUS, NRAY_SPE, IP, [])  # DIRWEI and APL not touched, not needed for spectra
 cl.enqueue_copy(queue, STEP_buf, STEP)
 cl.enqueue_copy(queue, IP_buf,   IP)
@@ -1290,4 +1329,6 @@ if (INI['tausave']>0):
         
 # print("     SPECTRA  %7.3f seconds" % Seconds())
    
-
+    
+    
+    
