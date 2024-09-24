@@ -92,7 +92,7 @@ __kernel void Update(
    int   lid = get_local_id(0) ;   // index within the local work group
    if  (id>=NRAY) return ;   
    float ip = IP[id] ;             // impact parameter [GL]
-
+   
 #if (LOWMEM>0)
    __global float *NTRUE = &NTRUE_ALL[id*CHANNELS] ;  // because we ran sometimes out of GPU local memoery
 #else
@@ -323,7 +323,7 @@ __kernel void Spectra(
       for(i=max(0, shift); i<min(CHANNELS, CHANNELS+shift); i++) {         
          dtau        =   tau*profile[i-shift] ;
          dx          =   emissivity*profile[i-shift]*GN*exp(-SUM_TAU[i]) ;
-         dx         *=  (fabs(dtau)>1.0e-7f) ? ((1.0f-exp(-dtau)) / dtau) : (1.0f-0.5f*tau) ;
+         dx         *=  (fabs(dtau)>1.0e-7f) ? ((1.0f-exp(-dtau)) / dtau) : (1.0f-0.5f*dtau) ;
          NTRUE[i]   +=   dx ;
          SUM_TAU[i] +=   dtau  ;
       }
@@ -565,7 +565,7 @@ void __kernel SolveCL(const int         BATCH,         //  0 number of cells per
    }
 #endif
    
-// #define USE_ESC 1
+   // #define USE_ESC 1
 #if (WITH_ALI>0)
    for(int t=0; t<TRANSITIONS; t++) {  // modified Einstein A
       u = UL[2*t] ;  l = UL[2*t+1] ;
@@ -630,3 +630,207 @@ void __kernel SolveCL(const int         BATCH,         //  0 number of cells per
 
 
 
+float GetStep(const float3 *POS, const float3 *DIR, const int IND, const __global float *RC) {
+   float r0, alfa, beta, r, b, c, det1, det2, distance, R ;
+   R    = length(*POS) ;
+   // printf("--- %9.5f %9.5f %9.5f   %8.4f %8.4f %8.4f   IND %d   %9.5f < %9.5f < %9.5f\n",  POS->x, POS->y, POS->z, DIR->x, $   
+   alfa =  1.0e10f ;
+   r    =  RC[IND]+EPS ;
+   b    =  2.0f*dot(*POS, *DIR) ;
+   c    =  R*R-r*r ;
+   det1 =  b*b-4.0f*c ;
+   if (det1>=0.0f) {
+      det1  =  sqrt(det1) ;
+      alfa  =   0.5f*(-b-det1) ;        // choose smaller of the two solutions
+      if (alfa<EPS)  {
+	 alfa = 0.5f*(-b+det1) ;
+	 if (alfa<EPS) alfa = 1.0e10 ;  // do not accept zero step
+	 // if (alfa<EPS) alfa = EPS ;  // do not accept zero step
+      }
+   }
+   // try inner radius
+   beta = 1.0e10f ;
+   if (IND>0) {
+      r    =  RC[IND-1]-EPS ;          // radius for the next border inwards
+      c    =  R*R - r*r ;
+      det2 =  b*b - 4.0f*c ;
+      if (det2>=0.0f) {                // solutions exist of determinant non-negative
+	 det2 = sqrt(det2) ;
+	 beta = 0.5f*(-b-det2) ;
+	 if (beta<EPS) {
+	    beta = 0.5f*(-b+det2) ;
+	    if (beta<EPS) beta = 1.0e10f ;
+	    // // // if (beta<EPS) beta = EPS ;
+	 }
+      }
+   }
+   
+   if (alfa<beta) {
+      distance = alfa ;
+   } else {
+      if (beta<1.0e9f) {
+	 distance = beta ;
+      } else {
+	 distance = EPS ;
+	 // distance = 1.0f/0.0f ;
+      }
+   }
+   distance += EPS ;
+   return distance  ; // [pc]
+}
+;
+
+
+
+void GetDirection(int ipix, float *theta, float *phi) {
+   // return direction for HEALPIC pixel ipix
+}
+
+
+
+__kernel void Escape(
+		     __global float4 *CLOUD,         //  0 [CELLS]: Vrad, Rc, ABUNDANCE, sigma
+		     __global float  *GAU,           //  1 precalculated gaussian profiles
+		     const float      GN,            //  2 Gauss normalisation == C_LIGHT/(1e5*DV*freq)
+		     __global float2 *NI,            //  3 [CELLS]:  NI[upper] + NB_NB
+		     const float      BG,            //  4 background = B(Tbg)*I2T
+		     const float      emis0,         //  5 h/(4pi)*freq*Aul*int2temp
+		     __global float  *IP,            //  6 impact parameter [GL] =>  ***radial offset***
+		     __global float  *STEP,          //  7 STEP[iray*CELLS+iray]  [GL]
+		     __global float  *NTRUE_ARRAY,   //  8 NRAY*CHANNELS
+		     __global float  *SUM_TAU_ARRAY, //  9 NRAY*CHANNELS
+		     __global float  *RHO,           // 10 [CELLS] ... for column density calculation
+		     __global float4 *COLDEN,        // 11 [NRAY_SPE] = N, N_mol, tau, dummy
+		     __global float  *RC,            // 12 RC[CELLS] outer cell radie
+		     __global float  *THETA,         // 13 THETA[NPIX]
+		     __global float  *PHI            // 14 PHI[NPIX]
+		    )
+{
+   // one work item per ray; the same rays as used in the actual calculation!
+   int id = get_global_id(0) ;   // id == ray index
+   if (id>=NRAY_SPE) return ;    // no more rays
+   __global float *NTRUE   = &(NTRUE_ARRAY[id*CHANNELS]) ;
+   __global float *SUM_TAU = &(SUM_TAU_ARRAY[id*CHANNELS]) ;
+   int i, count=0 ;
+   float tau, dtau, emissivity, doppler, nu, dx ;
+   int row, shift ;
+   __global float* profile ;
+   float ip = IP[id] ; // impact parameter [GL] ;
+   int INDEX, dstep = -1 ;
+   const int NPIX = 12*NSIDE*NSIDE ;
+   float colden=0.0f, coldenmol=0.0f, maxtau=0.0f, radius ;
+   float TOTAL_IN=0.0f, TOTAL_OUT=0.0f, nu0 ;
+   float3 POS, DIR ;
+   
+   // if ((id!=2)&&(id!=7)) return ;
+   
+   
+   TOTAL_IN = 0.0f ;  TOTAL_OUT = 0.0f ;
+   // loop over directions
+   for(int IDIR=0; IDIR<NPIX; IDIR+=1) {
+      
+      // Initial position
+      POS.x = 0.0f ; POS.y = 0.0f ; POS.z = clamp(ip, 1.0e-4f, RC[CELLS-1]-1.0e-4f) ;
+      for(INDEX=0; INDEX<CELLS; INDEX++) {
+	 if (POS.z<RC[INDEX]) {
+	    break ;
+	 }
+      }
+      if (INDEX>=CELLS) break ;
+#if 0  // again.... removal of printing causes error in calculation....
+      if (INDEX>=CELLS) {
+	 printf("??? INITIAL POSITION OUTSIDE CLOUD  %.5f > %.5f\n", POS.z, RC[CELLS-1]) ;
+      }
+#endif 
+      nu0   = NI[INDEX].x ;
+      
+      // The direction
+      DIR.x = sin(THETA[IDIR])*cos(PHI[IDIR])+1.0e-7f ;
+      DIR.y = sin(THETA[IDIR])*sin(PHI[IDIR])+1.0e-6f ;
+      DIR.z = cos(THETA[IDIR])+1.0e-5f ;
+      
+      for(int i=0; i<CHANNELS; i++) {
+	 NTRUE[i]   = 0.0f ;  SUM_TAU[i] = 0.0f ;
+      }
+      
+      // Initial emission
+      doppler    =  dstep*CLOUD[INDEX].x * sqrt( max(0.0f, 1.0f-pow(ip/CLOUD[INDEX].y,2.0f)) ) ;
+      profile    =  &GAU[INDEX*CHANNELS] ;  // GAU[CELLS, CHANNELS]
+      shift      =  round(doppler/WIDTH) ;
+      nu         =  NI[INDEX].x ;
+      dx         =  1.0f ;
+      emissivity =  emis0 * nu * dx * GL ;  // only relative emission needs to be correct (between cells)
+      for(i=max(0, shift); i<min(CHANNELS, CHANNELS+shift); i++) {         
+	 dx          =   emissivity*profile[i-shift]*GN ;  // *exp(-SUM_TAU[i]) ;
+	 NTRUE[i]    =   dx ;
+	 TOTAL_IN   +=   dx ;    // emission summed over channels and over directions
+	 SUM_TAU[i]  =   0.0f  ;
+	 if ((dx<0.0f)||(dx>1e20f)) printf("???\n") ;  // remove print and second transition results erroneous ???
+      }
+      // printf("* %3d  %8.4f %8.4f %8.4f   %8.4f %8.4f %8.4f   NTRUE=%12.4e\n", INDEX, POS.x, POS.y, POS.z, DIR.x, DIR.y, DIR.z, NTRUE[(int)(CHANNELS/2)]) ;
+      
+      count = 0 ;      
+      // Step to model boundary along the current direction
+      while (1) {
+	 dx         =  GetStep(&POS, &DIR, INDEX, RC) ;   // update neither POS nor INDEX
+	 colden    +=  dx*RHO[INDEX] ;                    // needs to be scaled later by GL
+	 coldenmol +=  dx*RHO[INDEX]*CLOUD[INDEX].z ;
+	 nu         =  NI[INDEX].x ;     
+	 // tau        =  (fabs(NI[INDEX].y)<1.0e-29f) ? (1.0e-29f) :  (NI[INDEX].y) ;
+	 tau        =  NI[INDEX].y ;
+	 tau       *=  GN*GL*dx ;
+	 tau        =  clamp(tau, -2.0f, 1.0e10f) ;      
+	 // CLOUD[].y = effective radius,  CLOUD[].w = sigma, CLOUD[].x = Vrad
+	 doppler    =  dstep*CLOUD[INDEX].x * sqrt( max(0.0f, 1.0f-pow(ip/CLOUD[INDEX].y,2.0f)) ) ;
+	 profile    =  &GAU[INDEX*CHANNELS] ;  // GAU[CELLS, CHANNELS]
+	 shift      =  round(doppler/WIDTH) ;
+	 // emissivity =  emis0 * nu * dx * GL ;    --- no more emission
+	 for(i=max(0, shift); i<min(CHANNELS, CHANNELS+shift); i++) {         
+	    dtau        =   tau*profile[i-shift] ;
+	    // NTRUE[i]   *=   exp(-dtau) ;       // attenuation for current step
+	    SUM_TAU[i] +=   dtau  ;
+	 }
+	 // Update POS and cell index
+	 POS     += dx*DIR  ;
+	 radius   = length(POS) ;
+	 for(INDEX=0; INDEX<CELLS; INDEX++) {
+	    if (RC[INDEX]>radius) {
+	       // printf("AAA  break   RC[%d]=%.4e > r=%.4f", INDEX, RC[INDEX], radius) ;
+	       break ;
+	    }
+	 }
+	 // printf("BBB  %3d  %8.4f %8.4f %8.4f   %8.4f %8.4f %8.4f   dx=%.3e R0=%.3e\n", INDEX, POS.x, POS.y, POS.z, DIR.x, DIR.y, DIR.z, dx, RC[CELLS-1]) ;
+	 if (INDEX>=CELLS) break ;
+	 count += 1 ;   if (count>100) break ;
+	 
+      } // while inside the model
+      
+      
+      // printf("XXX EXIT   %8.4f %8.4f %8.4f    steps %d \n", POS.x, POS.y, POS.z, count) ;
+      
+      
+      // Escape probability    SUM[  EMIT*exp(-tau)  ] /  SUM[ EMIT ], sums over channel
+      maxtau = 0.0f ;
+      for (i=0; i<CHANNELS; i++) {
+	 TOTAL_OUT += NTRUE[i]*exp(-SUM_TAU[i]) ;   // photons escaping for current direction
+	 // NTRUE[i]  =  SUM_TAU[i] ;     // return optical depth profile
+	 maxtau    =  max(maxtau, SUM_TAU[i]) ;
+      }
+      // printf("maxtau  %8.4f\n", maxtau) ;
+      
+      
+   } // loop over directions
+   
+   
+   COLDEN[id].x  = nu0 ;           // for convenience "local emissivity" = upper level population of this position
+   COLDEN[id].y  = TOTAL_OUT/clamp(TOTAL_IN, 1.0e-30f, 1.0e30f) ;  // escape probability over all directions
+   COLDEN[id].z  = 0.0f ;
+   COLDEN[id].w  = 0.0f ;
+   
+#if 0
+   printf("  ip %3d  R %.2f   beta %7.4f       IN= %10.3e  OUT=%.3e    nu0=%.3e,   <tau>= %8.4f\n",
+	  id,     ip,      TOTAL_OUT/TOTAL_IN, TOTAL_IN,   TOTAL_OUT,  nu0,        -log(TOTAL_OUT/TOTAL_IN)) ;
+#endif
+   
+   // for(int i=0; i<CELLS; i++) printf("   RC[%3d] = %8.4f\n", i, RC[i]) ;
+}
