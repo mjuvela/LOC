@@ -184,9 +184,10 @@ if (WITH_OVERLAP):
             SINGLE[OLBAND.GetTransition(iband, icmp)] = 0  # transition part of a wider band (overlap)
         MAXCHN = max([MAXCHN, OLBAND.Channels(iband)])     # Channels() == extra channels!
         MAXCMP = max([MAXCMP, OLBAND.NCMP[iband]])
-        print("OVERLAP => CHANNELS %d, MAXCHN %d, MAXCMP %d" % (CHANNELS, MAXCHN, MAXCMP))
-        for i in range(TRANSITIONS):
-            print("  SINGLE[%d] = %d" % (i, SINGLE[i]))
+        if (INI['verbose']>1): 
+            print("OVERLAP => CHANNELS %d, MAXCHN %d, MAXCMP %d" % (CHANNELS, MAXCHN, MAXCMP))
+            for i in range(TRANSITIONS):
+                print("  SINGLE[%d] = %d" % (i, SINGLE[i]))
     MAXCHN += CHANNELS
     
 print("TRANSITIONS %d, CELLS %d = %d x %d x %d" % (TRANSITIONS, CELLS, NX, NY, NZ))
@@ -230,10 +231,10 @@ if (INI['sdevice']==''):
     if (INI['GPU']):  LOCAL = 32
     else:             LOCAL =  1
     if (INI['LOCAL']>0): LOCAL = INI['LOCAL']
-    platform, device, context, queue,  mf = InitCL(INI['GPU'], INI['platforms'], INI['idevice'])
+    platform, device, context, queue,  mf = InitCL(INI['GPU'], INI['platforms'], INI['idevice'], sub=INI['cores'])
 else:
     # we use INI['GPU'] and optionally INI['sdevice'] to select the device
-    platform, device, context, queue, mf = InitCL_string(INI)
+    platform, device, context, queue, mf = InitCL_string(INI) # "sub" read directly from INI
     if (INI['GPU']):  LOCAL = 32
     else:             LOCAL =  1
     if (INI['LOCAL']>0): LOCAL = INI['LOCAL']
@@ -2188,18 +2189,18 @@ def SolveCL():
             ave_max_change   +=  sum(delta)
             NI_ARRAY[a:b,:]   =  res[0:batch]
     ave_max_change /= CELLS
-    print("      SolveCL    AVE %10.3e    MAX %10.3e" % (ave_max_change, global_max_change))
+    print("        SolveCL    AVE %10.3e    MAX %10.3e" % (ave_max_change, global_max_change))
     
     if (CABFP): CABFP.close()
     
     if (1):
         mbad = nonzero(~isfinite(sum(SIJ_ARRAY, axis=1)))
-        print('      *** SIJ NOT FINITE: %d' % len(mbad[0]))
+        print('        *** SIJ NOT FINITE: %d' % len(mbad[0]))
         if (WITH_ALI):
             mbad = nonzero(~isfinite(sum(ESC_ARRAY, axis=1)))
-            print('      *** ESC NOT FINITE: %d' % len(mbad[0]))
+            print('        *** ESC NOT FINITE: %d' % len(mbad[0]))
         mbad = nonzero(~isfinite(sum(NI_ARRAY,  axis=1)))
-        print('      *** NI  NOT FINITE: %d' % len(mbad[0]))
+        print('        *** NI  NOT FINITE: %d' % len(mbad[0]))
         for i in mbad[0]:
             NI_ARRAY[i,:] =  LTE_10_pop *RHO[i]*ABU[i]
     return ave_max_change
@@ -2214,7 +2215,7 @@ def WriteSpectra(INI, u, l):
     tmp_1       =  C_LIGHT*C_LIGHT/(8.0*pi)
     tran        =  MOL.L2T(u, l)
     if (tran<0):
-        print("*** ERROR:  WriteSpectra  %2d -> %2d not valid transition" % (u, l))
+        print("*** ERROR:  WriteSpectra  %2d -> %2d not valid transition... skipped" % (u, l))
         return
     if (HFS):
         ncmp    =  BAND[tran].N
@@ -2224,6 +2225,7 @@ def WriteSpectra(INI, u, l):
         nchn    =  CHANNELS     #  it is the original INI['channels']
         ncmp    =  1
     # print("*** WriteSpectra(%d, %d), ncmp=%d, nchn=%d, TAUSAVE %d" % (u, l, ncmp, nchn, TAUSAVE))
+    # print("WriteSpectra: %d -> %d, transition %d" % (u, l, tran))
     Aul         =  MOL.A[tran]
     freq        =  MOL.F[tran]
     gg          =  MOL.G[u]/MOL.G[l]
@@ -2433,17 +2435,20 @@ def WriteSpectra(INI, u, l):
                 cl.enqueue_copy(queue, NTRUE, STAU_buf)
                 for ra in range(NRA):
                     tau[ra]  =  np.max(NTRUE[ra,:])
-                ave_tau +=  sum(tau)   # sum of the peak tau values of the individual spectra
+                ave_tau +=  np.sum(tau)       # sum of the peak tau values of the individual spectra
                 if (TAUSAVE):                
                     tau.tofile(fptau)      # file containing peak tau for each spectrum
                 
             else:
                 for ra in range(NRA):
                     fp[0].data[:, de, ra]  =  NTRUE[ra, :]   #  NTRUE[NRA, nchn],  fp[nchn, NDE, NRA]
-                if (TAUSAVE):  # save optical depth
-                    cl.enqueue_copy(queue, NTRUE, STAU_buf)
-                    for ra in range(NRA):
-                        fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
+                cl.enqueue_copy(queue, NTRUE, STAU_buf)
+                for ra in range(NRA):
+                    tau[ra]  =  np.max(NTRUE[ra,:])
+                ave_tau +=  np.sum(tau)   # sum of the peak tau values of the individual spectra
+                if (TAUSAVE):          # save optical depth
+                    fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
+                    
         # --- for de
         if (INI['FITS']==0):
             fp.close()
@@ -2552,12 +2557,12 @@ def WriteSpectraOL(INI, OLBAND, iband):
         # dimensions, direction, centre -- now all in INI['mapview']
         # print('*** MAPVIEW ', INI['mapview'][iview])
         theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
-        NRA, NDE    =  int(NRA), int(NDE)                               # 2021-07-14 - map dimensions
-        NTRUE       =  zeros((NRA, NCHN), float32)        
-        DE          =  0.0    
-        GLOBAL      =  IRound(NRA, LOCAL)    
-        STEP        =  INI['grid'] / INI['angle']
-        direction   =  cl.cltypes.make_float2(0.0, 0.0)
+        NRA, NDE     =  int(NRA), int(NDE)                               # 2021-07-14 - map dimensions
+        NTRUE        =  zeros((NRA, NCHN), float32)        
+        DE           =  0.0    
+        GLOBAL       =  IRound(NRA, LOCAL)    
+        STEP         =  INI['grid'] / INI['angle']
+        direction    =  cl.cltypes.make_float2(0.0, 0.0)
         direction['x'], direction['y'] = theta, phi                   # 2021-07-14 - map direction
         centre       =  cl.cltypes.make_float3(0.0, 0.0, 0.0)
         centre['x'],  centre['y'], centre['z'] =  0.5*NX, 0.5*NY, 0.5*NZ   
@@ -2598,9 +2603,11 @@ def WriteSpectraOL(INI, OLBAND, iband):
             ira  = argmax(WWW)
             for ra in range(NRA):
                 fp[0].data[:, de, ra]  =  NTRUE[ra, :]   #  NTRUE[NRA, nchn],  fp[nchn, NDE, NRA]
-            if (TAUSAVE):  # save optical depth
-                cl.enqueue_copy(queue, NTRUE, OL_STAU_buf)
-                for ra in range(NRA):
+            # tau
+            cl.enqueue_copy(queue, NTRUE, OL_STAU_buf)
+            for ra in range(NRA):
+                ave_tau += np.max(NTRUE[ra,:])
+                if (TAUSAVE):  # save optical depth
                     fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
         # --- for de
         fp.writeto('OL_%s_%s_%02d-%02d%s.fits'        % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
@@ -3086,7 +3093,7 @@ for ITER in range(INI['iterations']):
         asarray(NI_ARRAY, float32).tofile(fp)
         fp.close()
     Tsave = time.time()-t0
-    print("      SIMULATION %7.2f    SOLVE %7.2f    SAVE %7.2f" % (Tsim, Tsol, Tsav))
+    print("       SIMULATION %7.2f    SOLVE %7.2f    SAVE %7.2f" % (Tsim, Tsol, Tsav))
     if (ave_max_change<INI['stop']):  break
 print("================================================================================")
 
@@ -3107,6 +3114,9 @@ if (0):
 
     
 if (1):    
+    print("\n********************")
+    print("***** save Tex *****")
+    print("********************")
     # Save Tex files
     ul = INI['Tex']                # upper and lower level for each transition
     ## print(ul)
@@ -3114,15 +3124,20 @@ if (1):
         print("NI[15,15,15]",  NI_ARRAY.reshape(30,30,30,LEVELS)[15,15,15,:])
     for i in range(len(ul)//2):    # loop over transitions
         u, l  =  ul[2*i], ul[2*i+1]
+        if (MOL.E[u]<MOL.E[l]):
+            print("      warning:  %2d -> %2d  converted to %2d -> %2d for Tex calculation" % (u, l, l, u))
+            tmp = u 
+            u = l
+            l = tmp
         tr    =  MOL.L2T(u,l)
         if (tr<0):
-            print("*** Error:  Tex %2d -> %2d  is not a valid transition" % (u, l))
-            continue
+            print("      warning:  Tex %2d -> %2d  (E=%.3e -> %.3e K) not radiative transition" % (u, l, H_K*MOL.E[u], H_K*MOL.E[l]))
+            # continue
         gg    =  MOL.G[u]/MOL.G[l]
         fp    =  open('%s_%s_%02d-%02d.tex' % (INI['prefix'], MOL.NAME, u, l), 'wb')
         asarray([NX, NY, NZ, LEVELS], int32).tofile(fp)
         tex   =  BOLTZMANN * log(NI_ARRAY[:, l]*gg/NI_ARRAY[:, u])
-        if (1):
+        if (0):
             m = nonzero((RHO>0.0)&(~isfinite(tex)))
             print("NaNs: %d" % len(m[0]))
             if (len(m[0])>10):
@@ -3144,8 +3159,11 @@ if (1):
                 #for j in range(TRANSITIONS):
                 #    sys.stdout.write(' %11.3e' % (SIJ_ARRAY[icell, j]))
                 #sys.stdout.write('\n')
-        m     =  nonzero(abs(tex)>1.0e-35)
-        tex   =  PLANCK * MOL.F[tr] / tex
+        m     =  nonzero(np.abs(tex)>1.0e-35)
+        if (len(m[0])<len(tex)):
+            print("      warning: divisions by zero => some Tex ~ 0 K values")
+        if (tr>=0):  tex[m]   =  PLANCK * MOL.F[tr] / tex[m]
+        else:        tex[m]   =  PLANCK * (MOL.E[u]-MOL.E[l]) / tex[m]
         asarray(tex, float32).tofile(fp)
         fp.close()
         if (OCTREE):
@@ -3166,6 +3184,9 @@ if (1):
         
 
 # Save spectra
+print("\n************************")
+print("***** save spectra *****")
+print("************************")
 ul = INI['spectra']
 for i in range(len(ul)//2):
     tran   =  MOL.L2T(ul[2*i], ul[2*i+1])
@@ -3180,6 +3201,9 @@ for i in range(len(ul)//2):
         WriteSpectra(INI, ul[2*i], ul[2*i+1])
         
 if (WITH_OVERLAP):             # save spectra for bands
+    print("\n*************************************")
+    print("***** write overlapping spectra *****")
+    print("*************************************")
     bands = []
     for i in range(len(ul)//2):
         tran   =  MOL.L2T(ul[2*i], ul[2*i+1])
@@ -3190,17 +3214,20 @@ if (WITH_OVERLAP):             # save spectra for bands
     
         
 if (INI['coldensave']>0):      # save  maps of N(H2), N(mol), Tkin, <V_LOS, mass_weighted)
+    print("\n*******************************")
+    print("***** save column density *****")
+    print("*******************************")
     WriteColumndensity(INI)
 
 if (INI['infallindex']>0.0):   # save  maps of N(H2), N(mol), Tkin, <V_LOS, mass_weighted)
     WriteInfallIndex(INI)
 
     
-print("================================================================================")
+print("\n================================================================================")
 
 print("LOC_OT.py TOTAL TIME: %.3f SECONDS" % (time.time()-t000))
     
-print(type(NI_ARRAY))    
-print(type(SIJ_ARRAY))    
-print(type(ESC_ARRAY))    
+#print(type(NI_ARRAY))    
+#print(type(SIJ_ARRAY))    
+#print(type(ESC_ARRAY))    
     

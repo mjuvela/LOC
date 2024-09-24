@@ -409,6 +409,9 @@ def ReadIni(filename):
     'FITS_DE'         :  0.0,                #
     'verbose'         :  1,
     'doublecool'      :  0, 
+    'escape'          :  0,                  # flag 0/1, whether to estimate and save escape probabilities
+    'nside'           : 64,                  # Healpix NSIDE for escape probability directions
+    'cores'           : -1,                  # Number of cores to use (default -1 = all)
     'keys'            : []                   # store all keywords
     }
     lines = open(filename, 'r').readlines()
@@ -490,6 +493,8 @@ def ReadIni(filename):
                 elif (s[1].lower()=='g'): INI.update({'GPU': 1})
                 else:
                     INI.update({'sdevice':  s[1]})
+            if (s[0].find('sdevice')==0):
+                INI.update({'sdevice':  s[1]})
             ### 18-08-2021: now specifies a file name if the "cooling" keyword exists
             if (s[0].find('cooling')==0):
                 INI.update({'cooling':  1})
@@ -524,11 +529,14 @@ def ReadIni(filename):
                 if (s[0].find("iterations")==0):   INI.update({'iterations':  x})
                 if (s[0].find("uppermost")==0):    INI.update({'uppermost':   x})
                 if (s[0].find("nside")==0):        INI.update({'nside':       x})
+                if (s[0].find("cores")==0):        INI.update({'cores':       x})
                 if (s[0].find("gpu")==0):          INI.update({'GPU':         x})
                 if (s[0].find("GPU")==0):          INI.update({'GPU':         x})
                 if (s[0].find("levels")==0):       INI.update({'levels':      x})
                 if (s[0].find("speray")==0):       INI.update({'nray_spe':    x})
+                if (s[0].find("nside")==0):        INI.update({'nside':       x})
                 if (s[0].find("nray")==0):         INI.update({'nray':        x})                
+                if (s[0].find("escape")==0):       INI.update({'escape':      x})                
                 if (s[0].find('offsets')==0):      INI.update({'offsets':     x})
                 if (s[0].find('lowmem')==0):       INI.update({'lowmem':      x})
                 if (s[0].find('clsolve')==0):      INI.update({'clsolve':     x})                        
@@ -845,6 +853,9 @@ def ReadCloud1D(INI, MOL):
     print("TOTAL SIGMA     %10.3e to %10.3e, average_vol %10.3e" % (np.min(sigma), np.max(sigma), sum(VOLUME*sigma)/sum(VOLUME)))
     print("ABUNDANCE       %10.3e to %10.3e" % (np.min(ABU), np.max(ABU)))
     print("VRAD            %10.3e to %10.3e" % (np.min(CLOUD[:]['x']), np.max(CLOUD[:]['x'])))
+    if (0):
+        for i in range(CELLS):
+            print(" n=%.3e T=%5.2f s=%5.2f x=%.3e v=%5.2f" % (RHO[i], TKIN[i], CLOUD[i]['w'], ABU[i], CLOUD[i]['x']))
     print("================================================================")
     
     if (INI['angle']>0.0):                # cloud size defines by ini file
@@ -938,8 +949,11 @@ def InitCL(GPU=0, platforms=[], idevice=0, sub=0, verbose=True):
                 device   = [ platform.get_devices(cl.device_type.CPU)[idevice] ]
             if (sub>0):
                 # try to make subdevices with sub threads, return the first one
+                print("Try to make sub-device: sub = %d on" % sub, device)
                 dpp       =  cl.device_partition_property
-                device    =  [device[0].create_sub_devices( [dpp.EQUALLY, sub] )[0],]
+                # device  =  [device[0].create_sub_devices( [dpp.EQUALLY, sub] )[0],]
+                device    =  [device[0].create_sub_devices( [ dpp.BY_COUNTS, sub, dpp.BY_COUNTS_LIST_END ] )[0],]
+                print(" sub_device: ", device)
             context   =  cl.Context(device)
             queue     =  cl.CommandQueue(context)
             break
@@ -963,6 +977,7 @@ def InitCL_string(INI, verbose=True):
                      and only set INI['GPU'] to indicate whether that was a CPU or a GPU
         verbose   =  if True, print out the names of the platforms
     """
+    print("*** InitCL_string ***")
     platforms    = cl.get_platforms()
     if (1): # print out platform.version, device.version for all devices
         print("================================================================================")
@@ -999,11 +1014,16 @@ def InitCL_string(INI, verbose=True):
         sys.exit()
     print(INI['sdevice'])
     # try to make subdevices with sub threads, return the first one
+    sub = INI['cores']
+    if (sub>0):
+        dpp       =  cl.device_partition_property
+        # device    =  [device[0].create_sub_devices( [dpp.EQUALLY, sub] )[0],]
+        device    =  [device[0].create_sub_devices( [dpp.BY_COUNTS, sub, dpp.BY_COUNTS_LIST_END ] )[0],]
     try:
         context   =  cl.Context(device)
         queue     =  cl.CommandQueue(context)
     except:
-        print("Failed to create OpenCL context and quee for device: ", device[0])
+        print("Failed to create OpenCL context and queue for device: ", device[0])
         sys.exit()
     if (verbose):
         print("Selected:")
