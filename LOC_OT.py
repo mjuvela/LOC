@@ -2210,6 +2210,11 @@ def SolveCL():
 
 
 def WriteSpectra(INI, u, l):
+    """
+    Inputs:
+        INI   =   parameter dictionary
+        u, l  =   upper and lower level index of the transition
+    """
     global MOL, program, queue, WIDTH, LOCAL, NI_ARRAY, WRK, NI_buf, HFS, CHANNELS, HFS, TAUSAVE
     global NTRUE_buf, STAU_buf, NI_buf, CLOUD_buf, GAU_buf, PROFILE_buf
     tmp_1       =  C_LIGHT*C_LIGHT/(8.0*pi)
@@ -2233,6 +2238,21 @@ def WriteSpectra(INI, u, l):
     int2temp    =  C_LIGHT*C_LIGHT/(2.0*BOLTZMANN*freq*freq)
     BG          =  int2temp * Planck(freq, INI['Tbg'])
 
+    # index of the spectrum... to find fwhm value, if given
+    ul          = INI['spectra']
+    ispectrum   = -1
+    for i in range(len(ul)//2):
+        if ((ul[2*i]==u)&(ul[2*i+1]==l)): 
+            ispectrum = i
+            break
+    assert(ispectrum>=0)
+    # 
+    fwhm   = -1.0
+    nfwhm  = len(INI['fwhm'])   # could be less than the number of saved spectra...
+    if (nfwhm>0):  # yes, fwhm is given
+        fwhm = INI['fwhm'][min([nfwhm-1, ispectrum])] / INI['grid']  # beam size in pixels
+    
+    
     NVIEW       =  len(INI['mapview'])
     for iview in range(NVIEW):
         
@@ -2363,6 +2383,8 @@ def WriteSpectra(INI, u, l):
         else:
             # print("MakeEmptyFitsDim... nchn = %d" % nchn)
             fp    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, nchn)
+            fp[0].header['BUNIT']    = 'K'
+            fp[0].header['RESTFREQ'] = freq
             if (TAUSAVE>0):
                 fptau =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, nchn)
             
@@ -2454,12 +2476,17 @@ def WriteSpectra(INI, u, l):
             fp.close()
             if (fptau): fptau.close()
         else:
+            # FITS spectra will be convolved if INI containted keyword fwhm            
+            if (fwhm>0.0):
+                fp[0].data = ConvolveCube(fp[0].data, fwhm, INI['GPU'], INI['platforms'])
+                fp[0].header['BEAM'] = fwhm*INI['grid']/3600.0
             fp.writeto('%s_%s_%02d-%02d%s.fits'        % (INI['prefix'], MOL.NAME, u, l, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
             if (TAUSAVE):
                 fptau.writeto('%s_%s_%02d-%02d_tau%s.fits' % (INI['prefix'], MOL.NAME, u, l, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
                 del fptau
             del fp
         print("  SPECTRUM %3d  = %2d -> %2d,  <tau_peak> = %.3e" % (tran, u, l, ave_tau/(NRA*NDE)))
+
 
         
 
@@ -2483,7 +2510,25 @@ def WriteSpectraOL(INI, OLBAND, iband):
     TRAN        =  asarray(OLBAND.TRAN[iband], int32)
     NCMP        =  OLBAND.NCMP[iband]
     COFF        =  asarray(OLBAND.COFF[iband], float32)
-    
+
+    # find the spectrum with the closest frequency
+    ul          =  INI['spectra']
+    ispectrum   =  -1
+    dfmin       =  1e10
+    for i in range(len(ul)//2):   # loop over spectra selected by user
+        itran   =  MOL.L2T(ul[2*i], ul[2*i+1])
+        df      =  abs(MOL.F[itran]-freq)
+        if (df<dfmin):
+            ispectrum = i
+            dfmin     = df
+    assert(ispectrum>=0)
+    # 
+    fwhm   = -1.0
+    nfwhm  = len(INI['fwhm'])   # could be less than the number of saved spectra...
+    if (nfwhm>0):               # yes, fwhm is given
+        fwhm = INI['fwhm'][min([nfwhm-1, ispectrum])] / INI['grid']  # beam size in pixels
+
+            
     NRA_MAX     =  0
     for iview in range(len(INI['mapview'])):    
         theta, phi,  NRA, NDE,  xc, yc, zc   =   INI['mapview'][iview] 
@@ -2571,6 +2616,8 @@ def WriteSpectraOL(INI, OLBAND, iband):
         # print("MAP CENTRE:  %8.3f %8.3f %8.3f" % (centre['x'], centre['y'], centre['z']))
         # print("MakeEmptyFitsDim... nchn = %d" % NCHN)
         fp    =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, NCHN)
+        fp[0].header['BUNIT']    = 'K'
+        fp[0].header['RESTFREQ'] = freq
         if (TAUSAVE>0):
             fptau =  MakeEmptyFitsDim(INI['FITS_RA'], INI['FITS_DE'], INI['grid']*ARCSEC_TO_DEGREE, NRA, NDE, WIDTH, NCHN)
         ###
@@ -2610,8 +2657,12 @@ def WriteSpectraOL(INI, OLBAND, iband):
                 if (TAUSAVE):  # save optical depth
                     fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
         # --- for de
+        if (fwhm>0.0):
+            fp[0].data = ConvolveCube(fp[0].data, fwhm, INI['GPU'], INI['platforms'])
+            fp[0].header['BEAM'] = fwhm*INI['grid']/3600.0            
         fp.writeto('OL_%s_%s_%02d-%02d%s.fits'        % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
         if (TAUSAVE):
+            #  TAU not convolved !
             fptau.writeto('%s_%s_%02d-%02d_tau%s.fits' % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
             del fptau
         print("  SPECTRUM %3d  = %2d -> %2d,  <tau_peak> = %.3e" % (tran0, u0, l0, ave_tau/(NRA*NDE)))

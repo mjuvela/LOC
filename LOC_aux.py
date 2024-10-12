@@ -412,7 +412,8 @@ def ReadIni(filename):
     'escape'          :  0,                  # flag 0/1, whether to estimate and save escape probabilities
     'nside'           : 64,                  # Healpix NSIDE for escape probability directions
     'cores'           : -1,                  # Number of cores to use (default -1 = all)
-    'keys'            : []                   # store all keywords
+    'keys'            : [],                  # store all keywords
+    'fwhm'            : []                   # LOC_OT only, beam fwhm [arcsec] in the same order as "spectra" arguments
     }
     lines = open(filename, 'r').readlines()
     for line in lines:        
@@ -451,7 +452,7 @@ def ReadIni(filename):
                 INI['FITS_DE'] = float(s[2])
             
                 
-        if (len(s)>1): # keywords with one argument
+        if (len(s)>1): # keywords with arguments
             # spectra and transitions have several int arguments
             if ((s[0].find('spectra')==0)|(s[0].lower().find('tex')==0)|(s[0].find('transition')==0)):
                 x = []
@@ -466,6 +467,11 @@ def ReadIni(filename):
                     if (s[0].find('spectra')==0):      INI.update({'spectra':     x})
                     if (s[0].lower().find('tex')==0):  INI.update({'Tex':         x})            
                     if (s[0].find('transition')==0):   INI.update({'Tex':         x})
+            if (s[0]=='fwhm'):
+                INI['fwhm'] = []
+                for x in s[1:]:
+                    if (x[0:1]=='#'): break
+                    INI['fwhm'].append(float(x))
             if (s[0].find('octree')==0):  
                 INI.update({'cloud':    s[1]})
                 if   (s[0].find('40')>0): INI['octree'] = 40
@@ -1549,6 +1555,30 @@ def ConvolveSpectra1D(filename, fwhm_as, GPU=0, platforms=[0,1,2,3,4], angle_as=
     fp.close()
     return V0+arange(NCHN)*DV, SPE
 
+
+
+def ConvolveCube(S, fwhm, GPU, platforms):
+    """
+    Convolve spectral cube S[NCHN, NY, NX], with beam FWHM equal to fwhm pixels.
+    """
+    SPE          =  asarray(S, float32)
+    NCHN, NY, NX =  SPE.shape
+    platform, device, context, queue, mf = InitCL(GPU, platforms)
+    INSTALL_DIR  =  os.path.dirname(os.path.realpath(__file__))    
+    source       =  open(INSTALL_DIR+"/kernel_convolve_spectra_3d.c").read()
+    opt          =  '-D FWHM=%.3ff -D NCHN=%d -D NY=%d -D NX=%d' % (fwhm, NCHN, NY, NX)
+    program      =  cl.Program(context, source).build(opt)
+    kernel_con   =  program.Convolve3D
+    SPE_buf      =  cl.Buffer(context, mf.READ_ONLY,  4*NCHN*NY*NX)
+    cl.enqueue_copy(queue, SPE_buf, SPE)
+    CON_buf      =  cl.Buffer(context, mf.READ_WRITE, 4*NCHN*NY*NX)
+    LOCAL        =  [ 1, 32 ][GPU>0]
+    GLOBAL       =  ((NY*NX)//LOCAL+1)*LOCAL   # one work item per spatial pixel
+    cl.enqueue_copy(queue, SPE_buf, SPE)
+    kernel_con(queue, [GLOBAL,], [LOCAL,], SPE_buf, CON_buf)
+    cl.enqueue_copy(queue, SPE, CON_buf)
+    return SPE
+        
 
 
 def MakeEmptyFitsDim(lon, lat, pix, m, n, dv=0.0, nchn=0, sys_req='fk5'):
