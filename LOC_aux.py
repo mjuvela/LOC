@@ -3,10 +3,9 @@ import  numpy as np
 from    matplotlib.pylab import *
 import  pyopencl as cl
 import  pyopencl.array as cl_array
-#import  healpy
 from    scipy.interpolate import interp1d
 import  pickle
-## from   MoleculeO import *
+
 
 
 C_LIGHT           =  2.99792458e10
@@ -428,7 +427,7 @@ def ReadIni(filename):
             try:
                 mc = [ float(s[5]), float(s[6]), float(s[7]) ]          #   map centre (xc, yc, zc)
             except:
-                mc = [ NaN, NaN, NaN ]  # these will be replaced by the default, the cloud centre
+                mc = [ np.NaN, np.NaN, np.NaN ]  # these will be replaced by the default, the cloud centre
                 pass
             #                      theta   phi       NX      NY        xc     yc     zc    
             INI['mapview'].append([tmp[0], tmp[1],   tmp[2], tmp[3],   mc[0], mc[1], mc[2]])
@@ -587,7 +586,7 @@ def ReadIni(filename):
     if (len(INI['mapview'])<1):
         #                  theta               phi                 nx               ny                xc   yc   zc 
         INI['mapview'].append(
-        [INI['direction'][0],INI['direction'][1],INI['points'][0],INI['points'][1], NaN, NaN, NaN])
+        [INI['direction'][0],INI['direction'][1],INI['points'][0],INI['points'][1], np.NaN, np.NaN, np.NaN])
     # some allocations depend on map size => update INI['points'] with the maximum values
     max_nra, max_nde = 0, 0
     for i in range(len(INI['mapview'])):
@@ -1522,13 +1521,14 @@ def ConvolveSpectra1D(filename, fwhm_as, GPU=0, platforms=[0,1,2,3,4], angle_as=
     INI          =  None
     if (angle_as<0.0): # angle not given as parameter, read pickled data from the spectrum file
         try:
-            INI          =  pickle.load(fp)
+            INI      =  pickle.load(fp)
             fp.close()
             fwhm     =  (fwhm_as/INI['angle']) * (NSPE-1.0)   # fwhm, in units where [0, NSPE-1] is the cloud radius
         except:
             print("*** ConvolveSpectra1D fails: angle_as not given as argument and not found in the spectrum file")
             sys.exit(0)
     else:
+        #  fwhm = now in units of samples where cloud radius = [0, NSPE-1] points
         fwhm     =  (fwhm_as/angle_as) * (NSPE-1.0)  # fwhm [number of offset steps]
     ###
     platform, device, context, queue, mf = InitCL(GPU, platforms)
@@ -1542,6 +1542,7 @@ def ConvolveSpectra1D(filename, fwhm_as, GPU=0, platforms=[0,1,2,3,4], angle_as=
     LOCAL        =  [ 1, 32 ][GPU>0]
     GLOBAL       =  (NSPE//LOCAL+1)*LOCAL
     cl.enqueue_copy(queue, SPE_buf, SPE)
+    #       
     kernel_con(queue, [GLOBAL,], [LOCAL,], NSPE, NCHN, int(samples)//2, fwhm, SPE_buf, CON_buf)
     cl.enqueue_copy(queue, SPE, CON_buf)
     ###

@@ -3,31 +3,43 @@
 __kernel void Convolve(const int NSPE, 
                        const int NCHN, 
                        const int DI,        // number of steps in each directions, to add samples
-                       const float fwhm,    // beam fwhm in units of the step between NSPE spectra
+                       const float fwhm,    // beam fwhm in units of the step between the NSPE spectra
                        __global float *SPE, __global float *CON) {
    // SPE contains SPE spectra, each NCHN channels, taken equidistantly at offsets [0.0, NSPE-1.0] in our units
    // Convolve spectra with Gaussian beam, fwhm in the same units, and put result to CON
+   //    .... if beam fwhm==angle (cloud radius), here parameter is fwhm==NSPE-1
    const int id = get_global_id(0) ;
    if (id>=NSPE) return ;
    // Switch to coordinates where the radial distances in SPE are  [0, NSPE-1.0]
    // This work item is at distance    id/(NSPE-1.0)  in the coordinates [0,1]
    // we loop over[-3*FWHM,+3*FWHM].... which is not ok if fwhm >> model size (extreme beam dilution)!
+
+
+   //   DI steps,  one step d=3*fwhm/DI, in units of [0,NSPE-1] steps in SPE
+   //   loop i=...+DI  means distance DI*(3*fwhm/DI) = 3*fwhm, in SPE steps
+   
    float W=0.0f, w, wb, r, d=3.0f*fwhm/DI ;    // spectra available at steps of 1.0, fwhm in the same units
+   // if FWHM~CLOUD RADIUS and DI=NSPE-1, d=3.0, and K=-4*log(2)*3
+   //   for i=-DI...+DU  =  
    float K= -4.0f*log(2.0f)*d*d/(fwhm*fwhm) ;  // Gaussian scaling, effectively FWHM = fwhm/d, for distance [d]
    int   a, b, k ;                             //                                                 |  
    for(int c=0; c<NCHN; c++) CON[id*NCHN+c] = 0.0f ;  // clear the target array                   |  
    for(int i=-DI; i<=+DI; i++) {         // stepping over area [-3*FWHM, +3*FWHM]                 |  
-      for(int j=-DI; j<=+DI; j++) {      // one unit in (i,j) corresponds to distance d           V  
+      for(int j=-DI; j<=+DI; j++) {      // one unit in (i,j) corresponds to distance d           V
          r  =  i*i+j*j ;                 // squared distance from the beam centre,         in units of d
+	 // [r] = in SPE steps
+	 //    real distance <=  DI * d =  DI * 3*fwhm/DI  =  3*fwhm, in SPE steps
          w  =  exp(K*r) ;                // Gaussian weight
          W +=  w ;
          // r = distance from the cloud centre, (i,j) = offset from that tot the actual pointing for one LOS
          r  =  sqrt((float)(j*j*d*d+(i*d+id)*(i*d+id))) ;  // pointing centre (id,0), offsets over the (beam) ~ (i,j)
+	 //   d = 3*fwhm/DI  =>   r distance <=  DI*d = 3*fwhm in SPE steps 
+	 
          // id  = offset in units == step between originally computed spectra = RADIUS/(NSPE-1)
          // i,j = local offsets in units [d] = small step used to sample the beam area
 #if 1
          // no interpolation, use the closest matching annulus
-         k  =  round(r) ;
+         k  =  round(r) ;   // in SPE steps = index to SPE array
          if (k<NSPE) {
             for(int c=0; c<NCHN; c++)     CON[id*NCHN+c]  +=   w*SPE[k*NCHN+c] ;
          }

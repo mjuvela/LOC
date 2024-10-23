@@ -33,10 +33,10 @@ if (COOLING & HFS):
     COOLING =  0
 DOUBLE_COOL =  INI['doublecool']                  # single precision *should* be enough...
 
-if (INI['angle']>0.0):  # cloud size defined by ini file
-    GL         =  INI['angle']*ARCSEC_TO_RADIAN * INI['distance'] *PARSEC   # [cm] = 1D cloud radius
              
 RADIUS, VOLUME, RHO, TKIN, CLOUD, ABU = ReadCloud1D(INI, MOL)
+# cloud size defined by ini file or read above from the cloud file (distance must be given in ini!)
+GL         =  INI['angle']*ARCSEC_TO_RADIAN * INI['distance'] *PARSEC   # [cm] = 1D cloud radius
 
 CELLS         =  len(RHO)   
 CLOUD_AREA    =  4.0*pi          # total cloud area [GL^2]
