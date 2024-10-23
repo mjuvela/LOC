@@ -3154,7 +3154,7 @@ if ((INI['iterations']>0)&(COOLING)):
 
     
 mleaf = nonzero(RHO<=0.0)
-NI_ARRAY[mleaf[0], :] = np.NaN
+NI_ARRAY[mleaf[0], :] = np.nan
 
 if (0):    
     clf()    

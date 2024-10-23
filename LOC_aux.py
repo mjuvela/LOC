@@ -427,7 +427,7 @@ def ReadIni(filename):
             try:
                 mc = [ float(s[5]), float(s[6]), float(s[7]) ]          #   map centre (xc, yc, zc)
             except:
-                mc = [ np.NaN, np.NaN, np.NaN ]  # these will be replaced by the default, the cloud centre
+                mc = [ np.nan, np.nan, np.nan ]  # these will be replaced by the default, the cloud centre
                 pass
             #                      theta   phi       NX      NY        xc     yc     zc    
             INI['mapview'].append([tmp[0], tmp[1],   tmp[2], tmp[3],   mc[0], mc[1], mc[2]])
@@ -586,7 +586,7 @@ def ReadIni(filename):
     if (len(INI['mapview'])<1):
         #                  theta               phi                 nx               ny                xc   yc   zc 
         INI['mapview'].append(
-        [INI['direction'][0],INI['direction'][1],INI['points'][0],INI['points'][1], np.NaN, np.NaN, np.NaN])
+        [INI['direction'][0],INI['direction'][1],INI['points'][0],INI['points'][1], np.nan, np.nan, np.nan])
     # some allocations depend on map size => update INI['points'] with the maximum values
     max_nra, max_nde = 0, 0
     for i in range(len(INI['mapview'])):
