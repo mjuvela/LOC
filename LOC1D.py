@@ -203,12 +203,12 @@ if (HFS):
         vel      =  (arange(channels)-0.5*(channels-1.0))*WIDTH
         for icell in range(CELLS):
             GAU[tran,icell,:] = 0.0             # CHANNELS elements
-            s   =  CLOUD[icell]['w']            # sigma  [km/s]
+            s   =  CLOUD[icell]['w']            # sigma  [km/s] = Doppler width
             for icmp in range(BAND[tran].N):    # loop over components
                 v0 = BAND[tran].VELOCITY[icmp]  # velocity shift (km/s) of this component
                 w  = BAND[tran].WEIGHT[icmp]
                 dv = vel-v0
-                GAU[tran,icell,0:channels] +=  w*exp(-dv*dv/(s*s))
+                GAU[tran,icell,0:channels] +=  w*exp(-dv*dv/(s*s)) # dv = Doppler width
             # normalisation
             GAU[tran,icell,:] /= sum(GAU[tran,icell,:])
             # figure out limits of significant channels

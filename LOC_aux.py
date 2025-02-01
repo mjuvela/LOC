@@ -823,7 +823,7 @@ def ReadCloud1D(INI, MOL):
         ABU[i]        =  max(1.0e-20, buf[3] * INI['kabundance'])
         CLOUD[i]['z'] =  ABU[i]                     # z=abundance
         CLOUD[i]['x'] =  buf[4] * INI['kvelocity']  # x=Vrad
-        sigma         =  buf[2] * INI['ksigma']     # multiplication applied to nonthermal component only
+        sigma         =  buf[2] * INI['ksigma']     # multiplication applied to nonthermal component only (Doppler width)
         if (INI['thermaldv']>0):
             sigma     =  np.sqrt(sigma*sigma + 2.0e-10*BOLTZMANN*TKIN[i] / (AMU*MOL.WEIGHT))
         CLOUD[i]['w'] =  sigma                      #  w = sigma

@@ -85,11 +85,11 @@ else:
     CELLS  =  NX*NY*NZ
     OTL    =  -1
 
-ONESHOT     =  INI['oneshot']    # no loop over ray offsets, kernel lops over all the rays
-NSIDE       =  int(INI['nside'])
-NDIR        =  max([6, 12*NSIDE*NSIDE])           # NSIDE=0 => 6 directions, cardinal directions only
-WIDTH       =  INI['bandwidth']/INI['channels']   # channel width [km/s], even for HFS calculations
-AREA        =  2.0*(NX*NY+NY*NZ+NZ*NX) 
+ONESHOT    =  INI['oneshot']    # no loop over ray offsets, kernel lops over all the rays
+NSIDE      =  int(INI['nside'])
+NDIR       =  max([6, 12*NSIDE*NSIDE])           # NSIDE=0 => 6 directions, cardinal directions only
+WIDTH      =  INI['bandwidth']/INI['channels']   # channel width [km/s], even for HFS calculations
+AREA       =  2.0*(NX*NY+NY*NZ+NZ*NX) 
 # NRAY should be enough for the largest side of the cloud
 if ((NX<=NY)&(NX<=NZ)):  NRAY =  ((NY+1)//2) * ((NZ+1)//2) 
 if ((NY<=NX)&(NY<=NZ)):  NRAY =  ((NX+1)//2) * ((NZ+1)//2) 
@@ -2447,7 +2447,7 @@ def WriteSpectra(INI, u, l):
             WWW  = sum(NTRUE, axis=1)
             ira  = argmax(WWW)
             # if (WWW[ira]>300): print("de=%3d  max(W)=%7.2f for ra=%d" % (de, WWW[ira], ira))
-                        
+            
             if (INI['FITS']==0):
                 for ra in range(NRA):
                     asarray([(ra-0.5*(NRA-1.0))*ANGLE, (de-0.5*(NDE-1.0))*ANGLE], float32).tofile(fp) # offsets
@@ -2462,14 +2462,17 @@ def WriteSpectra(INI, u, l):
                     tau.tofile(fptau)      # file containing peak tau for each spectrum
                 
             else:
+                # Spectrum
                 for ra in range(NRA):
                     fp[0].data[:, de, ra]  =  NTRUE[ra, :]   #  NTRUE[NRA, nchn],  fp[nchn, NDE, NRA]
+                # Optical depth
                 cl.enqueue_copy(queue, NTRUE, STAU_buf)
                 for ra in range(NRA):
                     tau[ra]  =  np.max(NTRUE[ra,:])
                 ave_tau +=  np.sum(tau)   # sum of the peak tau values of the individual spectra
                 if (TAUSAVE):          # save optical depth
-                    fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
+                    for ra in range(NRA):
+                        fptau[0].data[:, de, ra]  =  NTRUE[ra,:]
                     
         # --- for de
         if (INI['FITS']==0):
