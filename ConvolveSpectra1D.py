@@ -36,8 +36,8 @@ while(i<len(sys.argv)):
         GPU = 0
     i += 1
     
-print(fwhm_as, angle_as, samples, GPU)
-sys.exit()
+## print(fwhm_as, angle_as, samples, GPU)
+## sys.exit()
     
 if  (angle_as<0):
     print("Convolve %s, FWHM=%.2f arcsec, %dx%d samples" % (filename, fwhm_as, samples, samples))
