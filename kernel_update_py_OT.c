@@ -7,12 +7,18 @@
 
 #define GID   24
 #define SPLIT_UPSTREAM_ONLY 0
-#define SAFE  0           // SAFE>0 => add some warning messages
+#define SAFE  1           // SAFE>0 => add some warning messages
 
 // One might think that "NO_ATOMICS 1" is faster (allowed by ONESHOT=0)
 // but in practice it was slower... (?)
 #define NO_ATOMICS 0
 
+// MASERCLIP either large negative (allow masers) or small positive (1.0e-30f) to clip masers
+#if false
+#define MASERCLIP (1.0e-30f)
+#else
+#define MASERCLIP (-1.0e30f)
+#endif
 
 // single precision, instead of  1.0f-exp(-t)  use
 //     |t|<0.005   =>    t*(1.0f-0.5f*t)   .... or
@@ -536,7 +542,7 @@ __kernel void Spectra(
       distance  += dx ;                  
       
 #if 1      
-      tau        =  clamp(tau, 1.0e-30f, 1.0e10f) ;  // $$$  KILL ALL MASERS
+      tau        =  clamp(tau, MASERCLIP, 1.0e10f) ;  // $$$  KILL ALL MASERS
 #endif
       
       
@@ -796,7 +802,7 @@ __kernel void Spectra_vs_LOS(
       nu         =       NI[2*INDEX] ;           
       tau =  (fabs(NI[2*INDEX+1])<1.0e-30f) ? (dx*1.0e-30f*GN*GL) : clamp((float)(dx*NI[2*INDEX+1]*GN*GL), -2.0f, 1.0e10f) ;
       distance  += dx ;                  
-      tau        =  clamp(tau, 1.0e-30f, 1.0e10f) ;  // $$$  KILL ALL MASERS
+      tau        =  clamp(tau, MASERCLIP, 1.0e10f) ;  // $$$  KILL ALL MASERS
       
 # if (WITH_HALF==0)
       row        =  clamp((int)round(log(CLOUD[INDEX].w/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;
@@ -2332,7 +2338,7 @@ __kernel void UpdateHF4(  // @h
 #  if 0
       nb_nb     =  NI[2*INDEX+1] ;
 #  else
-      nb_nb     =  max(1.0e-30f, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
+      nb_nb     =  max(MASERCLIP, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
 #  endif
       // emitted photons divided between passing packages as before
       // this is accurate -- simulation sends exactly nu*Aul photons
@@ -2973,7 +2979,7 @@ __kernel void Update(   //  @u  Cartesian grid, PL not used, only APL
          w               =  tmp_tau*profile[ii-shift] ;
          factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
          // factor          =  (1.0f-exp(-w)) ;
-         escape          =  tmp_emit*factor ;    // emitted photons that escape current cell .... tmp_emit  =  weight*nu*(Aul/tmp_tau)
+         escape          =  tmp_emit*factor ;    // emitted photons that escape current cell, tmp_emit  =  weight*nu*(Aul/tmp_tau)
          absorbed        =  NTRUE[ii]*factor ;   // incoming photons that are absorbed
          NTRUE[ii]      +=  escape-absorbed ;         
          sum_delta_true +=  absorbed  ;          // ignore photons absorbed in emitting cell
@@ -6256,9 +6262,9 @@ __kernel void PathsOT40(  // @p
       // Current ray is still (OTL, OTI, POS)
       for(XL=OTL; XL>RL; XL--) {   // try to add subrays at level XL -- never on level=0
          
-#  if 1
+#  if (SAFE>0)
          if (NBUF>=MAX_NBUF) {
-            // printf("*** BUFFER FULL -- CANNOT CHECK SIDERAYS\n") ; 
+            printf("*** BUFFER FULL -- CANNOT CHECK SIDERAYS\n") ;
             break ;
          }
 #  endif
@@ -6668,7 +6674,7 @@ __kernel void PathsOT40(  // @p
    } // while INDEX>=0  --- stops when buffer is empty and the main level-0 ray has exited
    
    TPL[id] = tpl ;    // TPL[NRAY]  (could be just TPL[GLOBAL], because GLOBAL might be smaller)
-}  // END OF PathsOT4
+}  // END OF PathsOT40
 
 
 
@@ -6971,7 +6977,7 @@ __kernel void UpdateOT40(  // @u
 #  if 1
          if (NBUF>=MAX_NBUF) {
 #   if (SAFE>0)
-            printf("*** BUFFER FULL -- CANNOT CHECK SIDERAYS\n") ;
+            printf("*** BUFFER FULL NBUF=%d == MAX_NBUF=%d  -- CANNOT CHECK SIDERAYS\n", NBUF, MAX_NBUF) ;
 #   endif
             break ;
          }
@@ -7274,7 +7280,7 @@ __kernel void UpdateOT40(  // @u
 # if 0
       nb_nb     =  NI[2*INDEX+1] ;
 # else
-      nb_nb     =  max(1.0e-30f, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
+      nb_nb     =  max(MASERCLIP, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
 # endif
       
       // emitted photons divided between passing packages as before
@@ -7362,7 +7368,7 @@ __kernel void UpdateOT40(  // @u
 #   if 0
          factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
 #   else
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+         factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
 #   endif
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
          absorbed        =  NTRUE[i*gs]*factor ; // incoming photons that are absorbed
@@ -7395,7 +7401,7 @@ __kernel void UpdateOT40(  // @u
 #   if 0
          factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
 #   else
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+         factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
 #   endif
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
          absorbed        =  NTRUE[i*gs]*factor ; // incoming photons that are absorbed
@@ -7512,7 +7518,7 @@ __kernel void UpdateOT40(  // @u
       
    } // while INDEX>=0
    
-}  // end of UpdateOT4()
+}  // end of UpdateOT40()
 
 
 
@@ -7712,8 +7718,9 @@ __kernel void PathsOT4(  // @p
          
 #  if (SAFE>0)
          if (NBUF>=(MAX_NBUF-1)) {
-            printf("FULL !!!   gid %d, NBUF %d\n", gid, NBUF) ;  
-            return ;
+            printf("FULL !!!   gid %d, NBUF %d\n", gid, NBUF) ;
+            INDEX = -1 ; break ;
+            // return ;
          }
 #  endif
          
@@ -7840,7 +7847,7 @@ __kernel void PathsOT4(  // @p
 #  if (SAFE>0)
             if (NBUF>=MAX_NBUF) {
                printf("ADD UPSTREAM  LEVEL %d -> %d    NBUF = %2d\n", OTL-1, OTL, NBUF) ;
-               printf("BUFFER FULL !!!\n") ;
+               printf("BUFFER FULL, gid=%d, lid=%d!!!\n", gid, lid) ;
             }
 #  endif
             
@@ -8243,7 +8250,7 @@ __kernel void PathsOT4(  // @p
             
 #   if (SAFE>0)
             if (NBUF>=MAX_NBUF) {
-               printf("gid %7d ------  NBUF = %d !!!!!!!!!!!!!!!!!!!!!!\n", gid, NBUF) ;
+               printf("gid %7d ------  NBUF = %d >= MAX_NBUF %d !!!!!!!!!!!!!!!!!\n", gid, NBUF, MAX_NBUF) ;
                // NBUF -= 1 ;
             }
 #   endif
@@ -8266,8 +8273,10 @@ __kernel void PathsOT4(  // @p
       
 #  if (SAFE>0)
       if (NBUF>=MAX_NBUF) {
-         printf("ABORT --- NBUF>=MAX_NBUF !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n") ;
-         TPL[gid] = -1.0e20 ; return ;    // one should probably abort, unless plweight is used
+         printf("ABORT --- NBUF>=MAX_NBUF => %d >= %d !!!!!!!!!!!!!!!!!!!!\n", NBUF, MAX_NBUF) ;
+         TPL[gid] = -1.0e20 ;
+         INDEX = -1 ; break ;
+         // return ;    // one should probably abort, unless plweight is used
       }
 #  endif
       
@@ -9076,7 +9085,7 @@ __kernel void UpdateOT4(  // @u
 # if 0
       nb_nb     =  NI[2*INDEX+1] ;
 # else
-      nb_nb     =  max(1.0e-30f, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
+      nb_nb     =  max(MASERCLIP, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
 # endif
       
       // emitted photons divided between passing packages as before
@@ -9169,7 +9178,7 @@ __kernel void UpdateOT4(  // @u
 #   if 0
          factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
 #   else
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+         factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
 #   endif
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
          absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
@@ -9208,7 +9217,7 @@ __kernel void UpdateOT4(  // @u
 #   if 0
          factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
 #   else
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+         factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
 #   endif
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
          absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
@@ -9352,6 +9361,977 @@ __kernel void UpdateOT4(  // @u
    
 }  // end of UpdateOT4()
 
+
+
+
+
+
+
+
+
+//====================================================================================================
+//====================================================================================================
+
+
+
+#if 1
+
+__kernel void UpdateOT4Multitran(  // @u
+                          const int        gid0,    //  0  first gid in the index running over NRAY>=NWG
+# if (PLWEIGHT>0)
+                          __global float  *PL,      //  1
+# endif
+# if (WITH_HALF==1)
+                          __global half  *CLOUD,    //  2 [CELLS,4] ==  vx, vy, vz, sigma
+# else
+                          __global float4 *CLOUD,   //  2 [CELLS]: vx, vy, vz, sigma
+# endif
+                          GAUSTORE  float *GAU,     //  3 precalculated gaussian profiles [GNO,CHANNELS]
+                          constant int2   *LIM,     //  4 limits of ~zero profile function [GNO]
+                          constant float  *Aul,     //  5 Einstein A(upper->lower)     ***  A[btran]
+                          constant float  *A_b,     //  6 (g_u/g_l)*B(upper->lower)    ***  A_b[btran]
+                          constant float  *GN,      //  7 Gauss normalisation == C_LIGHT/(1e5*DV*freq) *** GN[btran]
+                          const float      APL,     //  8 average path length [GL] 
+                          constant float  *BG,      //  9 background value (photons) *** BG[btran]
+                          const float      DIRWEI,  // 10 weight factor (based on current direction)
+                          const float      EWEI,    // 11 weight 1/<1/cosT>/NDIR
+                          const int        LEADING, // 12 leading edge
+                          const REAL3      POS0,    // 13 initial position of id=0 ray
+                          const float3     DIR,     // 14 ray direction
+                          __global float  *NI,      // 15 NI[CELLS, ntran]
+                          __global float  *NBNB,    // 16 NBNB[CELLS, ntran]
+                          __global float  *RES,     // 17 SIJ[CELLS, ntran]
+                          __global float  *ESC,     // 18 ESC[CELLS, ntran]
+                          __global float  *NTRUES,  // 19 [NWG*MAXCHN*btran]   --- NWG>=simultaneous level 0 rays
+# if (WITH_CRT>0)
+                          constant float *CRT_TAU,  //  dust optical depth / GL
+                          constant float *CRT_EMI,  //  dust emission photons/c/channel/H
+# endif                     
+# if (BRUTE_COOLING>0)
+                          __global float   *COOL,   //  ???5 [CELLS] = cooling 
+# endif
+                          __global   int   *LCELLS, //  20
+                          __constant int   *OFF,    //  21
+                          __global   int   *PAR,    //  22
+                          __global   float *RHO,    //  23  -- needed only to describe the hierarchy
+                          __global   float *BUFFER_ALL,  //  24 -- buffer to store split rays [NWG, btran, 26+CHANNELS]
+                          const int         ntran,  //  25  -  total number of transitions allocated
+                          const int         btran   //  26  -  number of transitions to be calculated
+                       )  {   
+   // Each ***WORK GROUP*** processes one ray. The rays are two cells apart to avoid synchronisation
+   // problems. Rays start on the leading edge. If ray exits through a side (wrt axis closest to
+   // direction of propagation), a new one is created on the opposite side and the ray ends when the
+   // downstream edge is reached.
+   // 
+   // As one goes to a higher hierarchy level (into a refined cell), one pushes the original and two
+   // new rays to buffer. The fourth ray (one of the new ones) is followed first. When ray goes up in
+   // hierarchy (to a larger cell) ray is terminated if ray was created at a higher level. When one
+   // ray is terminated, the next one is taken from the buffer, if that is not empty. When ray goes up
+   // in hierarchy, NTRUE is scaled *= 4 or, if one goes up several levels, *=4^n, where n is the
+   // decrease in the hierarchy level.
+   int id  = get_global_id(0), lid = get_local_id(0), gid = get_group_id(0), ls = get_local_size(0) ;
+#if 0
+   __global float *BUFFER = &BUFFER_ALL[gid      *(26+CHANNELS)*MAX_NBUF] ;  // here gid ~ NWG
+#else
+   __global float *BUFFER = &BUFFER_ALL[gid*(26+btran*CHANNELS)*MAX_NBUF] ;  // here gid ~ NWG   BUFFER[NWG, ntran, 26+CHANNELS, MAX_NBUF]
+#endif
+
+   if (gid>=NWG)  return ;
+   gid += gid0 ;  // becomes running index over NRAY ....           here gid ~ NRAY
+   if (gid>=NRAY) return ;        // one work group per ray .... NWG==NRAY
+
+
+#if 0
+   // @@
+   if (id==0) {
+      printf("Aul %10.3e, A_b %10.3e, GN %10.3e, APL %10.3e, BG %10.3e, DIRWEI %10.3e, EWEI %10.3e\n",
+             Aul[0], A_b[0], GN[0], APL, BG[0], DIRWEI, EWEI) ;
+      printf("NI  NU=%10.3e NBNB=%10.3e ... NU=%10.3e NBNB=%10.3e\n",
+             NI[0], NBNB[0],  NI[CELLS-1], NBNB[CELLS-1]) ;
+   }
+   return ;
+#endif
+   
+
+   
+   GAUSTORE float *profile ;
+#if 0
+   __local  float  NTRUE[ntran*CHANNELS] ;
+#else
+   __global float  *NTRUE = &(NTRUES[gid*CHANNELS*ntran]) ;   // NTRUE[ntran, CHANNELS]
+#endif
+   __local  int2   LINT ;          // SID, NBUF
+   __local  float  SDT[LOCAL] ;    // per-workitem sum_delta_true
+   __local  float  AE[LOCAL] ;     // per-workitem all_escaped
+   float weight, w, doppler, tmp_tau, tmp_emit, factor, escape, absorbed, sum_delta_true, all_escaped, nu ;
+   int row, shift, INDEX, c1, c2, OTL, OTI, OTLO, XL, RL, SID, NBUF=0, sr, sid, level, b1, b2, I, i, ind, otl, oti ;
+   int level1, ind1 ;
+   REAL3  POS, pos0, pos1, pos, RDIR ;
+   REAL   dx, dy, dz, s ;
+   float dr ;
+   float flo ;
+   
+      
+# if (WITH_CRT>0)
+   not implemented ;
+   float Ctau, Cemit, Ltau, Ttau, tt, ttt, Lleave, Dleave, pro, sij ;
+# endif  
+# if (ONESHOT<1)
+   int nx=(NX+1)/2, ny=(NY+1)/2, nz=(NZ+1)/2 ;
+# endif
+   RDIR.x = DIR.x ; RDIR.y = DIR.y ; RDIR.z = DIR.z ;
+   
+   int *SUBS ;
+   POS.x = POS0.x ;   POS.y = POS0.y ;   POS.z = POS0.z ;
+   
+   // when split done only on the leading edge -- HEAD are the four subscells on the leading edge
+   int HEAD[4] ;   // the sub-indices of the four leading-edge subcells
+# if (ONESHOT<1)
+   if (LEADING<3) {
+      if (LEADING==0) { 
+         HEAD[0] = 0 ;   HEAD[1] = 2 ;   HEAD[2] = 4 ;  HEAD[3] = 6 ;
+         POS.x =    EPS ;  POS.y += TWO*(gid%ny) ;  POS.z += TWO*(int)(gid/ny) ;  // gid is index running over all NRAY
+      }
+      if (LEADING==1) { 
+         HEAD[0] = 1 ;   HEAD[1] = 3 ;   HEAD[2] = 5 ;  HEAD[3] = 7 ;
+         POS.x = NX-EPS ;  POS.y += TWO*(gid%ny) ;  POS.z += TWO*(int)(gid/ny) ;
+      }
+      if (LEADING==2) { 
+         HEAD[0] = 0 ;   HEAD[1] = 1 ;   HEAD[2] = 4 ;  HEAD[3] = 5 ;
+         POS.y =    EPS ;  POS.x += TWO*(gid%nx) ;  POS.z += TWO*(int)(gid/nx) ;
+      }
+   } else {
+      if (LEADING==3) { 
+         HEAD[0] = 2 ;   HEAD[1] = 3 ;   HEAD[2] = 6 ;  HEAD[3] = 7 ;
+         POS.y = NY-EPS ;  POS.x += TWO*(gid%nx) ;  POS.z += TWO*(int)(gid/nx) ;
+      }
+      if (LEADING==4) { 
+         HEAD[0] = 0 ;   HEAD[1] = 1 ;   HEAD[2] = 2 ;  HEAD[3] = 3 ;
+         POS.z =    EPS ;  POS.x += TWO*(gid%nx) ;  POS.y += TWO*(int)(gid/nx) ;
+      }
+      if (LEADING==5) { 
+         HEAD[0] = 4 ;   HEAD[1] = 5 ;   HEAD[2] = 6 ;  HEAD[3] = 7 ;
+         POS.z = NZ-EPS ;  POS.x += TWO*(gid%nx) ;  POS.y += TWO*(int)(gid/nx) ;
+      }
+   }
+# else
+   if (LEADING<3) {
+      if (LEADING==0) { 
+         HEAD[0] = 0 ;   HEAD[1] = 2 ;   HEAD[2] = 4 ;  HEAD[3] = 6 ;
+         POS.x =    EPS ;  POS.y += gid%NY ;  POS.z += gid/NY ;  // gid is index running over all NRAY
+      }
+      if (LEADING==1) { 
+         HEAD[0] = 1 ;   HEAD[1] = 3 ;   HEAD[2] = 5 ;  HEAD[3] = 7 ;
+         POS.x = NX-EPS ;  POS.y += gid%NY ;  POS.z += gid/NY ;
+      }
+      if (LEADING==2) { 
+         HEAD[0] = 0 ;   HEAD[1] = 1 ;   HEAD[2] = 4 ;  HEAD[3] = 5 ;
+         POS.y =    EPS ;  POS.x += gid%NX ;  POS.z += gid/NX ;
+      }
+   } else {
+      if (LEADING==3) { 
+         HEAD[0] = 2 ;   HEAD[1] = 3 ;   HEAD[2] = 6 ;  HEAD[3] = 7 ;
+         POS.y = NY-EPS ;  POS.x += gid%NX ;  POS.z += gid/NX ;
+      }
+      if (LEADING==4) { 
+         HEAD[0] = 0 ;   HEAD[1] = 1 ;   HEAD[2] = 2 ;  HEAD[3] = 3 ;
+         POS.z =    EPS ;  POS.x += gid%NX ;  POS.y += gid/NX ;
+      }
+      if (LEADING==5) { 
+         HEAD[0] = 4 ;   HEAD[1] = 5 ;   HEAD[2] = 6 ;  HEAD[3] = 7 ;
+         POS.z = NZ-EPS ;  POS.x += gid%NX ;  POS.y += gid/NX ;
+      }
+   }
+# endif
+   
+   
+   IndexGR(&POS, &OTL, &OTI, RHO, OFF) ;     // remain at root level, not yet going to leaf
+   if (OTI<0) return ;
+   INDEX     =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1)  ;  
+   OTLO      =  OTL ;
+   RL        =  0 ;
+   for(int tran=0; tran<btran; tran++) {
+      for(int i=lid; i<CHANNELS; i+=ls) {
+         NTRUE[tran*CHANNELS+i] = BG[tran] * DIRWEI ;  // NTRUE[btran, MAXCHN]
+      }
+   }
+   
+   
+   while(INDEX>=0) {  // INDEX may refer to a cell that is not a leaf
+      
+      barrier(CLK_LOCAL_MEM_FENCE) ;
+      
+      // If we are not in a leaf, we have gone to some higher level. 
+      // Go one level higher, add >=three rays, pick one of them as the current,
+      // and return to the beginning of the loop.
+      if (RHO[INDEX]<=0.0f) {                    // go to the sub-cell and add sibling rays
+         
+         sr     =  0 ;         
+         NBUF   =  min(NBUF, MAX_NBUF-1) ;      // BUFFER IS ALREADY FULL ...??? replace last one ???
+         c1     =  NBUF*(26+btran*CHANNELS) ;   // BUFFER[26+btran*CHANNELS]
+         SID    =  -1 ;
+         
+         POS.x  =  TWO*fmod(POS.x, ONE) ;      // coordinate inside parent cell [0,1]
+         POS.y  =  TWO*fmod(POS.y, ONE) ;
+         POS.z  =  TWO*fmod(POS.z, ONE) ;
+         flo    =  -RHO[INDEX] ;                 // OTL, OTI of the parent cell
+         OTL   +=  1  ;                          // step to next level = refined level
+         OTI    =  *(int *)&flo ;                // OTI for the first child in octet
+         SID    =  4*(int)floor(POS.z) + 2*(int)floor(POS.y) + (int)floor(POS.x) ; // original subcell
+         OTI   +=  SID;                          // cell in octet, original ray
+         c2     =  0 ;   // set c2=1 if ray is to be split (is this the leading cell edge?)
+         if (LEADING<3) {
+            if ((LEADING==0)&&(POS.x<  EPS2)) c2 = 1 ; 
+            if ((LEADING==1)&&(POS.x>TMEPS2)) c2 = 1 ; 
+            if ((LEADING==2)&&(POS.y<  EPS2)) c2 = 1 ;
+         } else {
+            if ((LEADING==3)&&(POS.y>TMEPS2)) c2 = 1 ; 
+            if ((LEADING==4)&&(POS.z<  EPS2)) c2 = 1 ;
+            if ((LEADING==5)&&(POS.z>TMEPS2)) c2 = 1 ;
+         }
+         // @@  rescale always when the resolution changes
+         for(int tran=0; tran<btran; tran++) {
+            for(int i=lid; i<CHANNELS; i+=ls) {   // SCALE ON EVERY REFINEMENT EVEN WHEN NOT SPLIT
+               NTRUE[tran*CHANNELS+i] *= 0.25f ;  // NTRUE[btran, CHANNELS]
+            }
+         }
+         barrier(CLK_LOCAL_MEM_FENCE) ;
+         
+         if (c2>0) {  // split the ray and choose one of the new ones to be followed first
+
+            for(int tran=0; tran<btran; tran++) {
+               for(int i=lid; i<CHANNELS; i+=ls) {   // ray effectively split to four
+                  BUFFER[c1+26+tran*CHANNELS+i] = NTRUE[tran*CHANNELS + i] ;
+               }
+            }
+            barrier(CLK_LOCAL_MEM_FENCE) ;
+
+
+            // c1  =  NBUF*(26+btran*CHANNELS) ;   == first of current NBUF, allocation 26+btran*CHANNELS            
+            if (lid==0) {
+               BUFFER[c1+0]  =  OTL ;                     // level where the split is done, OTL>this =>
+               BUFFER[c1+1]  =  I2F(OTI) ;                // buffer contains the OTI of the original ray 
+               BUFFER[c1+2]  =  POS.x ;                   // Store the original MAIN RAY to buffer as the first one
+               BUFFER[c1+3]  =  POS.y ;
+               BUFFER[c1+4]  =  POS.z ;
+               BUFFER[c1+5]  =  RL  ;                     // main ray exists at levels >= RL
+            }            
+            // Two new subrays added to buffer, third one becomes the current ray
+            // Add first two subrays to buffer
+            if (                  HEAD[0]==SID) {  // 0=original => (1,2) to buffer, 3 as current
+               if (lid==0) {
+                  sid              = HEAD[1] ;
+                  BUFFER[c1+2+4*1] = fmod(POS.x,ONE) + (sid % 2) ;
+                  BUFFER[c1+3+4*1] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                  BUFFER[c1+4+4*1] = fmod(POS.z,ONE) + (sid/4) ;
+                  sid              = HEAD[2] ;
+                  BUFFER[c1+2+4*2] = fmod(POS.x,ONE) + (sid % 2) ;
+                  BUFFER[c1+3+4*2] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                  BUFFER[c1+4+4*2] = fmod(POS.z,ONE) + (sid/4) ;
+               }
+               SID              = HEAD[3] ;  // SID of the subray to be followed first
+            } else {
+               if (                  HEAD[1]==SID) {
+                  if (lid==0) {
+                     sid              = HEAD[2] ;
+                     BUFFER[c1+2+4*1] = fmod(POS.x,ONE) + (sid % 2) ;
+                     BUFFER[c1+3+4*1] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                     BUFFER[c1+4+4*1] = fmod(POS.z,ONE) + (sid/4) ;
+                     sid              = HEAD[3] ;
+                     BUFFER[c1+2+4*2] = fmod(POS.x,ONE) + (sid % 2) ;
+                     BUFFER[c1+3+4*2] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                     BUFFER[c1+4+4*2] = fmod(POS.z,ONE) + (sid/4) ;
+                  }
+                  SID              = HEAD[0] ;
+               } else {
+                  if (                  HEAD[2]==SID) {
+                     if (lid==0) {
+                        sid              = HEAD[3] ;
+                        BUFFER[c1+2+4*1] = fmod(POS.x,ONE) + (sid % 2) ;
+                        BUFFER[c1+3+4*1] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                        BUFFER[c1+4+4*1] = fmod(POS.z,ONE) + (sid/4) ;
+                        sid              = HEAD[0] ;
+                        BUFFER[c1+2+4*2] = fmod(POS.x,ONE) + (sid % 2) ;
+                        BUFFER[c1+3+4*2] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                        BUFFER[c1+4+4*2] = fmod(POS.z,ONE) + (sid/4) ;
+                     }
+                     SID              = HEAD[1] ;
+                  } else {
+                     if (                  HEAD[3]==SID) {
+                        if (lid==0) {
+                           sid              = HEAD[0] ;
+                           BUFFER[c1+2+4*1] = fmod(POS.x,ONE) + (sid % 2) ;
+                           BUFFER[c1+3+4*1] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                           BUFFER[c1+4+4*1] = fmod(POS.z,ONE) + (sid/4) ;
+                           sid              = HEAD[1] ;
+                           BUFFER[c1+2+4*2] = fmod(POS.x,ONE) + (sid % 2) ;
+                           BUFFER[c1+3+4*2] = fmod(POS.y,ONE) + ((sid/2)%2 ) ;
+                           BUFFER[c1+4+4*2] = fmod(POS.z,ONE) + (sid/4) ;
+                        }
+                        SID              = HEAD[2] ;
+                     } else {
+                        ; // printf("???\n") ;
+                     }
+                  }
+               }
+            } 
+            // for the two subrays just added, update RL, SPLIT
+            sr = 3 ;   // so far the original main ray and two split subrays
+            if (lid==0) {
+               BUFFER[c1+5+4*1]  =  OTL ;    BUFFER[c1+5+4*2]  =  OTL ;  // RL = current OTL
+               for(int i=sr; i<6; i++)  BUFFER[c1+2+4*i] = -99.0f ;      // mark the rest as unused
+            } // lid==0
+            // We added leading edge rays, old main ray is in buffer, SID refers to one of the subrays
+            // update OTI and POS to correspond to that subray
+            OTI       =  (*(int *)&flo)  + SID ;    // the new ray to be followed, OTI = index of first subcell + SID
+            POS.x     =  fmod(POS.x,ONE) + (int)( SID%2)    ;  // dx and SID known to all work items
+            POS.y     =  fmod(POS.y,ONE) + (int)((SID/2)%2) ;
+            POS.z     =  fmod(POS.z,ONE) + (int)( SID/4)    ;
+            RL        =  OTL ;  // when we reach OTL<RL, this ray will be terminated
+            NBUF++ ;            // >= 1 subrays were added, NBUF increases just by one
+            
+         } // c2>0  == we split rays on the leading edge
+         
+      } // RHO<0
+      
+      
+      INDEX  = OFF[OTL] + OTI ;
+      if (RHO[INDEX]<=0.0f) continue ;  // not a leaf, go back to the beginning of the main loop
+      
+      
+      
+      
+# if 1  // adding siderays
+      
+      // It is essential that we are already in a leaf node when siderays are added:
+      // once ray has produced siderays at the current location, it will immediately take a 
+      // real step forward.            
+      
+      // Current ray is still (OTL, OTI, POS)
+      // presumably current NTRUE is correct for ray at level OTL
+      
+      // Siderays are based on rays hitting the leading edge. We have stepped down to leaf level.
+      // Therefore, incoming ray has already been split to four, and NTRUE has been scaled by 0.25 to
+      // correspond to the step from OTL-1 to OTL.
+      
+      
+      for(XL=OTL; XL>RL; XL--) {   // try to add subrays at levels   RL<XL<=OTL
+         
+         
+         if (XL==OTL) {  // calculate only if we actually come to the loop
+#  if (SAFE>0)
+            if (NBUF>=MAX_NBUF) {
+               // printf("*** BUFFER FULL -- CANNOT CHECK SIDERAYS\n") ; 
+               break ;
+            }
+#  endif
+            // we use root coordinates to determine whether RL ray is also RL-1 ray
+            // the required accuracy is only 0.5*0.5**MAXL, float32 works at least to MAXL=15
+            pos0 = POS ;     RootPos(&pos0, OTL, OTI, OFF, PAR) ;   // current position in root coordinates
+         }
+         
+         c1     =  NBUF*(26+btran*CHANNELS) ;          // 26+CHANNELS elements per buffer entry
+         sr     =  0  ;
+         
+         if (((LEADING==0)&&(POS.x<EPS2))||((LEADING==1)&&(POS.x>TMEPS2))) {  // +/-X leading edge, at OTL level
+            dr   = pown(0.5f, XL) ;            // XL level cell size in root grid units
+            b1   = (int)(round(pos0.x/dr)) ;   // current position is steps of XL cell size, main direction
+            if (b1%2!=0)  break ;              // not XL boundary, no need to test smaller XL (larger dr) values
+            // even number of dr,is therefore a border between level XL octets
+            // calculate (pos, level, ind) for the position at level XL  (in the octet that we are in)
+            pos = POS ;  level = OTL ;  ind = OTI ;   // original ray at some refinement level OTL>=XL
+            if (XL<OTL)  IndexUP(&pos, &level, &ind, RHO, OFF, PAR, XL) ; // (level, ind, pos) at level XL
+            // (pos, level, ind) now define the position at level XL
+            // ===== TEST SIDERAYS HITING THE Y SIDEWALL ===== offsets                              Y and Z
+            // check XL-scale neighbour
+            pos1.x =  0.1f ;     pos1.z = 0.1f ;           // some position in the current octet (level==XL)
+            pos1.y =  (DIR.y>0.0f) ? (-0.1f)  :  (2.1f) ;  // upstream neighbour, main offset       Y * 
+            // IndexOT will find the cell with the pos1 coordinates, stops downward search at level==RL+1
+            level1 = level ;  ind1 = ind ;    IndexOT(&pos1, &level1, &ind1, RHO, OFF, PAR, level,NULL, NULL, -1) ;
+            if (level1<level) {    // ***C*** neighbour not refined to XL==level, provides no level XL rays
+               // Current ray position at level==XL is defined by (level, ind, pos).
+               // We loop over XL positions on the leading-edge plane, ignore those not common with
+               // XL-1 rays, and choose those that actually hit the -Y side of the current octet.
+               for(int a=-1; a<=3; a++) {               // level==XL offsets in +/- Y direction from the current ray
+                  for(int b=-1; b<=3; b++) {            // ray offset in +/- Z direction
+                     if ((a%2==0)&&(b%2==0)) continue ; // ***D*** even offsets... is also level XL-1 ray
+                     // if we come this far, we will add the ray if it just hits the current octet
+                     pos1    = pos ;  // again the incoming ray, at the leading edge, in level==XL coordinates
+                     pos1.y += (DIR.y>0.0f) ? (-ONE*a) : (+ONE*a) ;   // add first offset =       Y **
+                     if ((pos1.y>=ZERO)&&(pos1.y<=TWO)) continue ;     // still inside the current octet, ignore
+                     pos1.z += (DIR.z>0.0f) ? (-ONE*b) : (+ONE*b) ;   // add second offset =      Z ***
+                     // pos1 = initial coordinates at the leading-edge level, step forward to the Y sidewall
+                     if (DIR.y>0.0f)   pos1  +=  ((EPS  -pos1.y)/RDIR.y) * RDIR ;  // step based on    Y ****
+                     else              pos1  +=  ((TMEPS-pos1.y)/RDIR.y) * RDIR ;  // to 2.0  (level==RL+1)
+                     // main offset Y matches, check X and Z
+                     if ((pos1.x<=ZERO)||(pos1.x>=TWO)||(pos1.z<=ZERO)||(pos1.z>=TWO)) continue ; // no hit
+#  if (DOUBLE_POS==0)
+                     pos1.y  =  clamp(pos1.y, EPS2, TMEPS2) ; // make sure pos in   octet        Y *****
+#  endif
+                     // Add the ray from the upstream direction to buffer as a new subray
+                     //    we leave the buffer entry at level XL, if leafs are >XL, we drop to next 
+                     //    refinement level only at the beginning of the main loop.
+                     // Each sideray will actually continue in location refined to some level >=XL
+                     // We will store NTRUE correct for XL. If sideray is in refined region, beginning of the
+                     // main loop will drop the ray to the higher level and rescale NTRUE accordingly.
+                     if (lid==0) {
+                        BUFFER[c1+2+4*sr] =  pos1.x ;   // level XL coordinates
+                        BUFFER[c1+3+4*sr] =  pos1.y ;
+                        BUFFER[c1+4+4*sr] =  pos1.z ;
+                        BUFFER[c1+5+4*sr] =  XL  ;      // ray is created at level==XL
+                     }
+                     sr += 1 ;                     
+                  } // for b
+               } // for a
+            } // level1<OTL_NRAY
+            // ===== TEST SIDERAYS HITING THE Z SIDEWALL ===== offsets                              Z and Y
+            // current ray at level level==RL+1 defined by (level, ind, pos)
+            pos1.x =  0.1f ;    pos1.y = 0.1f ;
+            pos1.z =  (DIR.z>0.0f) ? (-0.1f)  : (2.1f) ;  // upstream neighbour, main offset        Z *
+            level1 = level ;    ind1 = ind  ;  IndexOT(&pos1, &level1, &ind1, RHO, OFF, PAR, level, NULL, NULL, -1) ;
+            if (level1<level) {     // neighbour not refined to level==XL, will not provide XL siderays
+               for(int a=-1; a<=3; a++) {       // offset in +/- Z direction from the level RL ray, in XL steps
+                  for(int b=-1; b<=3; b++) {    // ray offset in +/- Y direction, candidate relative to current ray
+                     if ((a%2==0)&&(b%2==0)) continue ; // skip LR rays
+                     // if we come this far, we will add the ray if it just hits the current octet with RL+1 cells
+                     pos1     =  pos ;                                   // original ray at level XL
+                     pos1.z  += (DIR.z>0.0f) ? (-ONE*a) : (+ONE*a) ;   // add first offset =      Z **
+                     if ((pos1.z>=ZERO)&&(pos1.z<=TWO)) continue ;      // in current octet, will not hit sidewall
+                     pos1.y  += (DIR.y>0.0f) ? (-ONE*b) : (+ONE*b) ;   // second offset           Y ***
+                     // pos1 = initial coordinates at the leading edge plane, step to the Z sidewall
+                     if (DIR.z>0.0f) pos1  +=  ((EPS  -pos1.z)/RDIR.z) * RDIR ; // step based on       Z ****
+                     else            pos1  +=  ((TMEPS-pos1.z)/RDIR.z) * RDIR ;
+                     // main offset Z matches, check X and Y
+                     if ((pos1.x<=ZERO)||(pos1.x>=TWO)||(pos1.y<=ZERO)||(pos1.y>=TWO)) continue ; // no hit
+#  if (DOUBLE_POS==0)
+                     pos1.z   =  clamp(pos1.z, EPS2, TMEPS2) ; // make sure pos in octet,        Z *****
+#  endif
+                     if (lid==0) {
+                        BUFFER[c1+2+4*sr] = pos1.x ;     // level XL coordinates
+                        BUFFER[c1+3+4*sr] = pos1.y ;
+                        BUFFER[c1+4+4*sr] = pos1.z ;
+                        BUFFER[c1+5+4*sr] = XL     ;      // ray created at level RL+1
+                     }
+                     sr += 1 ;                     
+                  } // for b
+               } // for a
+            } // level1<OTL_NRAY
+         } // LEADING=0
+         
+         
+         if (((LEADING==2)&&(POS.y<EPS2))||((LEADING==3)&&(POS.y>TMEPS2))) {  // +/-Y leading edge
+            dr   = pown(0.5f, XL) ;            // XL level cell size in root grid units
+            b1   = (int)(round(pos0.y/dr)) ;   // current position is steps of XL cell size, main direction
+            if (b1%2!=0)  break ;              // not XL boundary, no need to test lower XL values either
+            // ***A*** even number of dr,is therefore a border between level XL octets
+            pos = POS ;  level = OTL ;  ind = OTI ;   // original ray at some refinement level OTL>=XL
+            if (XL<OTL) IndexUP(&pos, &level, &ind, RHO, OFF, PAR, XL) ; // (level, ind, pos) at level XL
+            // if (level!=XL) printf("PROBLEM !!!!!!!!!!!!!!\n") ;
+            // ===== TEST SIDERAYS HITTING THE X SIDEWALL ===== offsets                             X and Z
+            pos1.y =  0.1f ;     pos1.z = 0.1f ;           // some position in the current octet (level==XL)
+            pos1.x =  (DIR.x>0.0f) ? (-0.1f)  :  (2.1f) ;  // upstream neighbour, main offset       X *
+            // IndexOT will find the cell with the pos1 coordinates, stops downward search at level==RL+1
+            level1 = level ;  ind1 = ind ;    IndexOT(&pos1, &level1, &ind1, RHO, OFF, PAR, level, NULL, NULL, -1) ;
+            if (level1<level) {    // ***C*** neighbour not refined to XL==level, provides no level XL rays
+               for(int a=-1; a<=3; a++) {               // level==XL offsets in +/- Y direction from the current ray
+                  for(int b=-1; b<=3; b++) {            // ray offset in +/- Z direction
+                     if ((a%2==0)&&(b%2==0)) continue ; // ***D*** even offsets... is also level XL-1 ray
+                     // if we come this far, we will add the ray if it just hits the current octet
+                     pos1    = pos ;  // again the incoming ray, at the leading edge, in level==XL coordinates
+                     pos1.x += (DIR.x>0.0f) ? (-ONE*a) : (+ONE*a) ;   // add first offset  =      X **
+                     if ((pos1.x>=ZERO)&&(pos1.x<=TWO)) continue ;     // still inside the current   octet, ignore
+                     pos1.z += (DIR.z>0.0f) ? (-ONE*b) : (+ONE*b) ;   // add second offset =      Z ***
+                     if (DIR.x>0.0f)   pos1  +=  ((EPS  -pos1.x)/RDIR.x) * RDIR ;  // step based on    X ****
+                     else              pos1  +=  ((TMEPS-pos1.x)/RDIR.x) * RDIR ;
+                     // main offset X matches, check Y and Z
+                     if ((pos1.y<=ZERO)||(pos1.y>=TWO)||(pos1.z<=ZERO)||(pos1.z>=TWO)) continue ; // no hit
+#  if (DOUBLE_POS==0)
+                     pos1.x  =  clamp(pos1.x, EPS2, TMEPS2) ; // make sure pos inthe octet,      X *****
+#  endif
+                     // remember  =>  c1  =  NBUF*(26+btran*CHANNELS)
+                     if (lid==0) {
+                        BUFFER[c1+2+4*sr] =  pos1.x ;   // level XL coordinates
+                        BUFFER[c1+3+4*sr] =  pos1.y ;
+                        BUFFER[c1+4+4*sr] =  pos1.z ;
+                        BUFFER[c1+5+4*sr] =  XL  ;      // ray is created at level RL+1
+                     }
+                     sr += 1 ;                     
+                  } // for b
+               } // for a
+            } // level1<OTL_NRAY
+            // ===== TEST SIDERAYS HITING THE Z SIDEWALL =====  offsets                             Z and X
+            pos1.x =  0.1f ;    pos1.y = 0.1f ;
+            pos1.z =  (DIR.z>0.0f) ? (-0.1f)  : (2.1f) ;  // upstream neighbour, main offset        Z *
+            level1 = level ;    ind1 = ind  ;  IndexOT(&pos1, &level1, &ind1, RHO, OFF, PAR, level, NULL, NULL, -1) ;
+            if (level1<level) {   // ***C*** neighbour not refined to level==RL+1, will not provide RL+1 siderays
+               for(int a=-1; a<=3; a++) {       // first offset direction
+                  for(int b=-1; b<=3; b++) {    // second offset direction
+                     if ((a%2==0)&&(b%2==0)) continue ; // skip XL+1 rays
+                     pos1     =  pos ;                                   // original ray at level XL
+                     pos1.z  += (DIR.z>0.0f) ? (-ONE*a) : (+ONE*a) ;   // add first offset  =     Z **
+                     if ((pos1.z>=ZERO)&&(pos1.z<=TWO)) continue ;      // still inside the current octet, ignoe
+                     pos1.x  += (DIR.x>0.0f) ? (-ONE*b) : (+ONE*b) ;   // add second offset =     X ***
+                     if (DIR.z>0.0f) pos1  +=  ((EPS  -pos1.z)/RDIR.z) * RDIR ; // step based on       Z ****
+                     else            pos1  +=  ((TMEPS-pos1.z)/RDIR.z) * RDIR ;
+                     // main offset Z matches, check X and Y
+                     if ((pos1.x<=ZERO)||(pos1.x>=TWO)||(pos1.y<=ZERO)||(pos1.y>=TWO)) continue ; // no hit
+#  if (DOUBLE_POS==0)
+                     pos1.z   =  clamp(pos1.z, EPS2, TMEPS2) ; // make sure pos in the octet,    Z *****
+#  endif
+                     if (lid==0) {
+                        BUFFER[c1+2+4*sr] = pos1.x ;     // level XL coordinates
+                        BUFFER[c1+3+4*sr] = pos1.y ;
+                        BUFFER[c1+4+4*sr] = pos1.z ;
+                        BUFFER[c1+5+4*sr] = XL  ;        // ray created at level RL+1
+                     }
+                     sr += 1 ;                     
+                  } // for b
+               } // for a
+            } // level1<OTL_NRAY
+         } // LEADING=0
+         
+         
+         
+         if (((LEADING==4)&&(POS.z<EPS2))||((LEADING==5)&&(POS.z>TMEPS2))) {  // +/-Z leading edge
+            dr   = pown(0.5f, XL) ;            // XL level cell size in root grid units
+            b1   = (int)(round(pos0.z/dr)) ;   // current position is steps of XL cell size, main direction
+            if (b1%2!=0)  break ;              // not XL boundary, no need to test lower XL values either
+            // even number of dr,is therefore a border between level XL octets
+            pos = POS ;  level = OTL ;  ind = OTI ;   // original ray at some refinement level OTL>=XL
+            if (XL<OTL)  IndexUP(&pos, &level, &ind, RHO, OFF, PAR, XL) ; // (level, ind, pos) at level XL
+            // if (level!=XL) printf("PROBLEM !!!!!!!!!!!!!!\n") ;
+            // ===== TEST SIDERAYS HITING THE X SIDEWALL ===== offsets                              X and Y
+            pos1.y =  0.1f ;     pos1.z = 0.1f ;
+            pos1.x =  (DIR.x>0.0f) ? (-0.1f) : (2.1f) ;    // upstream neighbour, main offset       X *
+            level1 = level ;  ind1 = ind ;    IndexOT(&pos1, &level1, &ind1, RHO, OFF, PAR, level, NULL, NULL, -1) ;
+            if (level1<level) {    // neighbour not refined to XL==level, provides no level XL rays
+               for(int a=-1; a<=3; a++) {               // level==XL offsets in +/- Y direction from the current ray
+                  for(int b=-1; b<=3; b++) {            // ray offset in +/- Z direction
+                     if ((a%2==0)&&(b%2==0)) continue ; // ***D*** even offsets... is also level XL-1 ray
+                     pos1    = pos ;  // again the incoming ray, at the leading edge, in level==XL coordinates
+                     pos1.x += (DIR.x>0.0f) ? (-ONE*a) : (+ONE*a) ;   // add first offset  =      X **
+                     if ((pos1.x>=ZERO)&&(pos1.x<=TWO)) continue ;     // still inside the current   octet, ignore
+                     pos1.y += (DIR.y>0.0f) ? (-ONE*b) : (+ONE*b) ;   // add second offset =      Y ***
+                     if (DIR.x>0.0f)   pos1  +=  ((EPS  -pos1.x)/RDIR.x) * RDIR ;  // step based on    X ****
+                     else              pos1  +=  ((TMEPS-pos1.x)/RDIR.x) * RDIR ;
+                     // main offset X matches, check Y and Z
+                     if ((pos1.y<=ZERO)||(pos1.y>=TWO)||(pos1.z<=ZERO)||(pos1.z>=TWO)) continue ; // no hit
+#  if (DOUBLE_POS==0)
+                     pos1.x  =  clamp(pos1.x, EPS2, TMEPS2) ; // make sure pos in the octet,     X *****
+#  endif
+                     if (lid==0) {
+                        BUFFER[c1+2+4*sr] =  pos1.x ;   // level XL coordinates
+                        BUFFER[c1+3+4*sr] =  pos1.y ;
+                        BUFFER[c1+4+4*sr] =  pos1.z ;
+                        BUFFER[c1+5+4*sr] =  XL  ;      // ray is created at level RL+1
+                     }
+                     sr += 1 ;
+                  } // for b
+               } // for a
+            } // level1<OTL_NRAY
+            // ===== TEST SIDERAYS HITING THE Y SIDEWALL =====  offsets                            Y and X
+            pos1.x =  0.1f ;    pos1.z = 0.1f ;
+            pos1.y =  (DIR.y>0.0f) ? (-0.1f)  : (2.1f) ;  // upstream neighbour, main offset       Y *
+            level1 = level ;    ind1 = ind  ;  IndexOT(&pos1, &level1, &ind1, RHO, OFF, PAR, level, NULL, NULL, -1) ;
+            if (level1<level) {   // ***C*** neighbour not refined to level==RL+1, will not provide RL+1 siderays
+               for(int a=-1; a<=3; a++) {       // first offset direction
+                  for(int b=-1; b<=3; b++) {    // second offset direction
+                     if ((a%2==0)&&(b%2==0)) continue ; // skip XL+1 rays
+                     pos1     =  pos ;                                   // original ray at level XL 
+                     pos1.y  += (DIR.y>0.0f) ? (-ONE*a) : (+ONE*a) ;   // add first offset  =    Y **
+                     if ((pos1.y>=ZERO)&&(pos1.y<=TWO)) continue ;      // still inside the current octet, ignoe
+                     pos1.x  += (DIR.x>0.0f) ? (-ONE*b) : (+ONE*b) ;   // add second offset =    X ***
+                     if (DIR.y>0.0f) pos1  +=  ((EPS  -pos1.y)/RDIR.y) * RDIR ; // step based on      Y ****
+                     else            pos1  +=  ((TMEPS-pos1.y)/RDIR.y) * RDIR ;
+                     // main offset Y matches, check X and Z
+                     if ((pos1.x<=ZERO)||(pos1.x>=TWO)||(pos1.z<=ZERO)||(pos1.z>=TWO)) continue ; // no hit
+#  if (DOUBLE_POS==0)
+                     pos1.y   =  clamp(pos1.y, EPS2, TMEPS2) ; // make sure pos in the octet,   Y *****
+#  endif
+                     if (lid==0) {
+                        BUFFER[c1+2+4*sr] = pos1.x ;     // level XL coordinates
+                        BUFFER[c1+3+4*sr] = pos1.y ;
+                        BUFFER[c1+4+4*sr] = pos1.z ;
+                        BUFFER[c1+5+4*sr] = XL  ;        // ray created at level RL+1
+                     }
+                     sr += 1 ;                     
+                  } // for b
+               } // for a
+            } // level1<OTL_NRAY
+         } // LEADING=0
+         
+         
+         if (sr>0) {  // added some siderays
+            // While the current ray was at level OTL, there are no guarantees that the same
+            // refinement exists for all added siderays. Therefore, we add all siderays
+            // using the level XL coordinates. This also means that the siderays and the
+            // leading-edge subrays (below) must be stored as separate BUFFER entries (different NBUF).
+            if (lid==0){
+               BUFFER[c1+0] = XL ;          // at level XL all rays stored as level XL rays
+               BUFFER[c1+1] = I2F(ind) ;    // index of *original ray*, at level XL
+               // We leave the original ray as the current one == (OTL, OTI, POS) remain unchanged.
+               for(int i=sr; i<6; i++) BUFFER[c1+2+4*i] = -99.0f ; // mark the rest as unused
+            }
+            // NTRUE is correct for OTL but we store data for level XL
+            // Therefore, BUFFER will contain  NTRUE * 0.25**(XL-OTL)  == NTRUE * 4**(OTL-XL)
+            // ==>  the BUFFER values are   NTRUE(correct for RL) * 4.0**(OTL-XL), OTL and not RL !!!!
+            // When sideray is taken from buffer and if it is located in a region with OTL>XL, the
+            // beginning of the main loop will again rescale with  4.0*(XL-OTL)
+            dr  =  pown(4.0f, OTL-XL) ;          // was RL-XL but surely must be OTL-XL !!!!!
+            for(int tran=0; tran<btran; tran++) {
+               for(int i=lid; i<CHANNELS; i+=ls) {
+                  BUFFER[c1+26+tran*CHANNELS+i] = NTRUE[tran*CHANNELS+i]*dr ;   // NTRUE scaled from RL to XL 
+               }
+            }
+            NBUF += 1 ;            
+#  if 0
+            if (NBUF>=MAX_NBUF) {
+               printf("update => BUFFER FULL !!!\n") ;
+            }
+#  endif
+         }
+         
+      } // for XL -- adding possible siderays
+      
+      
+      // Subrays are added only when we are at leaf level. Also, when subrays are added, 
+      // we continue with the original RL ray and immediately make a step forward. Therefore
+      // there is no risk that we would add siderays multiple times.
+# endif // adding siderays
+      
+      
+      
+      
+      // global index -- must be now >=0 since we started with while(INDEX>=0) and just possibly went down a level
+      INDEX = OFF[OTL]+OTI ;   
+      
+      // if not yet a leaf, jump back to start of the loop => another step down
+      if (RHO[INDEX]<=0.0f) {
+         continue ;
+      }
+      
+      // we are now in a leaf node, ready to make the step
+      OTLO   =  OTL ;
+      
+      
+      
+      dr     =  GetStepOT(&POS, &DIR, &OTL, &OTI, RHO, OFF, PAR, OTLO, NULL   , LEADING) ;  // POS is now the end of this step
+      
+      
+      
+# if 0   // @@ double check PL calculation ... PL[:] should be reduced to zero
+      if (lid==0)  AADD(&(PL[INDEX]), -dr) ;   // must not have SKIP_PL !!
+# endif
+      
+      
+      
+      
+      
+      // if (RHO[INDEX]>CLIP) { // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      // one workgroup per ray => can have barriers inside the condition
+                  
+      
+      barrier(CLK_LOCAL_MEM_FENCE) ;
+      
+# if 0
+      barrier(CLK_LOCAL_MEM_FENCE) ;
+      barrier(CLK_GLOBAL_MEM_FENCE) ;
+      for(int i=lid; i<LOCAL; i+=LOCAL) {
+         printf("[%3d]  %2d %6d   %8.4f %8.4f %8.4f   %2d\n", lid, OTL, OTI, POS.x, POS.y, POS.z, NBUF) ;
+      }
+# endif
+      
+      
+      // with path length already being the same in all cells !   V /=8,  rays*4==length/2 /=2 =>  2/8=1/4
+      weight    =  (dr/APL) *  VOLUME  *  pown(0.25f, OTLO) ;  // OTL=1 => dr/APL=0.5
+      
+      
+      // emitted photons divided between passing packages as before
+      // this is accurate -- simulation sends exactly nu*Aul photons
+# if (WITH_HALF==0)
+      doppler   =  CLOUD[INDEX].x*DIR.x + CLOUD[INDEX].y*DIR.y + CLOUD[INDEX].z*DIR.z ;
+# else
+      doppler   =  vload_half(0, &(CLOUD[4*INDEX+0]))*DIR.x + vload_half(0, &(CLOUD[4*INDEX+1]))*DIR.y + vload_half(0, &(CLOUD[4*INDEX+2]))*DIR.z ;
+# endif
+      shift     =  round(doppler/WIDTH) ;
+# if (WITH_HALF==1)      //               sigma = 0.002f * w,   lookup table: sigma = SIGMA0 * SIGMAX^row
+      // row       =  clamp((int)round(log(CLOUD[INDEX].w*0.002f/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;
+      row       =  clamp((int)round(log(vload_half(0,&(CLOUD[4*INDEX+3]))/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;
+# else
+      row       =  clamp((int)round(log(CLOUD[INDEX].w/SIGMA0)/log(SIGMAX)), 0, GNO-1) ;      
+# endif
+      profile   =  &GAU[row*CHANNELS] ;
+      // avoid profile function outside profile channels LIM.x, LIM.y
+      c1        =  max(LIM[row].x+shift, max(0, shift)) ;
+      c2        =  min(LIM[row].y+shift, min(CHANNELS-1, CHANNELS-1+shift)) ;
+
+      
+# if (WITH_CRT>0) // WITH_CRT
+      not implemented ;
+      sij = 0.0f ;
+      all_escaped = 0.0f ;
+      // Dust optical depth and emission
+      //   here escape = line photon exiting the cell + line photons absorbed by dust
+      Ctau      =  dr     * CRT_TAU[INDEX] ;
+      Cemit     =  weight * CRT_EMI[INDEX] ;      
+      for(int i=c1; i<=c2; i++)  {
+         pro    =  profile[i-shift] ;
+         Ltau   =  tmp_tau*pro ;
+         Ttau   =  Ctau + Ltau ;
+         // tt     =  (1.0f-exp(-Ttau)) / Ttau ;
+         tt     =  (fabs(Ttau)>0.01f) ?  ((1.0f-exp(-Ttau))/Ttau) : (1.0f-Ttau*(0.5f-0.166666667f*Ttau)) ;
+         // ttt    = (1.0f-tt)/Ttau
+         ttt    =  (1.0f-tt)/Ttau ;
+         // Line emission leaving the cell   --- GL in profile
+         // Lleave =  weight*nu*Aul*pro * tt ;
+         Lleave =  weight*nu*Aul*pro * tt ;
+         // Dust emission leaving the cell 
+         Dleave =  Cemit *                     tt ;
+         // SIJ updates, first incoming photons then absorbed dust emission
+         sij   +=  A_b * pro*GN*dr * NTRUE[i]*tt ;
+         // sij         += A_b * profile[i]*GN*Cemit*dr*(1.0f-tt)/Ttau ; // GN includes GL!
+         sij   +=  A_b * pro*GN*dr * Cemit*ttt ;    // GN includes GL!
+         // "Escaping" line photons = absorbed by dust or leave the cell
+         all_escaped +=  Lleave  +  weight*nu*Aul*pro * Ctau * ttt ;
+         // Total change of photons in the package
+         NTRUE[i]     =  NTRUE[i]*exp(-Ttau) + Dleave + Lleave ;
+      }  // loop over channels
+      
+#  if (NO_ATOMICS>0)
+      RES[2*INDEX]    += sij ;            // division by VOLUME done in the solver (kernel)
+      RES[2*INDEX+1]  += all_escaped ;    // divided by VOLUME only oin Solve() !!!
+#  else
+      AADD(&(RES[2*INDEX]), sij) ;
+      AADD(&(RES[2*INDEX+1]), all_escaped) ;
+#  endif
+      
+      
+# else   // not  WITH_CRT ***************************************************************************************
+      
+      
+      // because of c1, the same NTRUE elements may be updated each time by different work items...
+      barrier(CLK_LOCAL_MEM_FENCE) ;    // local NTRUE elements possibly updated by different threads
+      
+      
+      
+      
+#  if (WITH_ALI>0) // *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
+
+
+
+      for(int tran=0; tran<btran; tran++) {
+         tmp_tau         =  dr*NBNB[INDEX*ntran+tran]*GN[tran] ;   //  NBNB[INDEX, ntran]
+         nu              =       NI[INDEX*ntran+tran] ;            //  NI[INDEX, ntran] = NI_upper
+         tmp_emit        =  weight * nu * Aul[tran] / tmp_tau ;    //  GN include grid length [cm]
+#if 1
+         if (isfinite(tmp_emit)) { ; } else { tmp_emit = 0.0f ; }
+#endif
+         sum_delta_true  =  0.0f ;
+         all_escaped     =  0.0f ;
+         
+         for(int i=c1+lid; i<=c2; i+=ls)  {
+            w               =  tmp_tau*profile[i-shift] ;
+            factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+            // absence affects strongly low-density regions
+#   if 0
+            factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
+#   else
+            factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
+#   endif
+            // if (id==0) printf("   .... %10.3e  %10.3e %10.3e %10.3e\n", factor, tmp_tau, tmp_emit, nu) ;            
+            escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
+            absorbed        =  NTRUE[tran*CHANNELS+i]*factor ;    // incoming photons that are absorbed
+            NTRUE[tran*CHANNELS+i]   +=  escape-absorbed ;
+            sum_delta_true +=  absorbed  ;          // ignore photons absorbed in emitting cell
+            all_escaped    +=  escape ;             // sum of escaping photons over the profile
+         }   // over channels
+         SDT[lid] = sum_delta_true ;
+         AE[lid]  = all_escaped ;                   // all work items save their own results
+         barrier(CLK_LOCAL_MEM_FENCE) ;             // all agree on NTRUE, all know SDT and AE
+         if (lid==0) {                              // lid=0 sums up and saves absorptions and escaped photons
+            for(int i=1; i<LOCAL; i++) {  
+               sum_delta_true += SDT[i] ;
+               all_escaped    +=  AE[i] ;     
+            }
+            all_escaped     =  clamp(all_escaped, 0.0001f*weight*nu*Aul[tran], 0.9999f*weight*nu*Aul[tran]) ; // must be [0,1]
+            // RES[2*INDEX]   +=  A_b * (sum_delta_true / nb_nb) ;
+            // RES[2*INDEX+1] +=  all_escaped ;
+            w               =  A_b[tran] * (sum_delta_true/NBNB[INDEX*ntran+tran]) ;
+#   if (NO_ATOMICS>0)
+            RES[INDEX*ntran+tran]   +=  w ;                   // RES[CELLS, ntran]
+            ESC[INDEX*ntran+tran]   +=  all_escaped ;         // ESC[CELLS, ntran]
+#   else
+            AADD(&(RES[INDEX*ntran+tran]),  w) ;
+            AADD(&(ESC[INDEX*ntran+tran]),  all_escaped) ;
+#   endif
+            // if (id==0) printf("all_escaped  %10.3e  ==> %10.3e\n", all_escaped, ESC[INDEX*ntran+tran]) ;            
+         } // lid==0
+      }  // for tran
+
+
+      
+      
+#  else // else no ALI *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
+      
+
+
+      for(int tran=0; tran<btran; tran++) {
+         
+         tmp_tau         =  dr*NBNB[INDEX*ntran+tran]*GN[tran] ;
+         tmp_emit        =  weight * nu[tran]*Aul[tran] / tmp_tau ;  // GN include grid length [cm]
+         sum_delta_true  =  0.0f ;
+         all_escaped     =  0.0f ;
+            
+         for(int i=c1+lid; i<=c2; i+=ls)  {
+            w               =  tmp_tau*profile[i-shift] ;
+            factor          =  (fabs(w)>0.01f) ? (1.0f-exp(-w)) : (w*(1.0f-w*(0.5f-0.166666667f*w))) ;
+#   if 0
+            factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
+#   else
+            factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
+#   endif
+            escape          =  tmp_emit*factor ;                 // emitted photons that escape current cell
+            absorbed        =  NTRUE[tran*CHANNELS+i]*factor ;   // incoming photons that are absorbed
+            NTRUE[tran*CHANNELS+i]    +=  escape-absorbed ;
+            sum_delta_true +=  absorbed - escape ;  // later sum_delta_true +=  W*nu*Aul
+         }   // over channels
+         SDT[lid] = sum_delta_true ;    // each local work item, Sij for current transition
+         barrier(CLK_LOCAL_MEM_FENCE) ;
+         if (lid==0) {
+            for(int i=1; i<LOCAL; i++)  sum_delta_true += SDT[i] ;    
+            w  =   A_b  * ((weight*nu[tran]*Aul[tran] + sum_delta_true) / NBNB[INDEX*ntran+tran])  ;
+#   if (NO_ATOMICS>0)         
+            RES[INDEX*ntran+tran] += w ;           // RES[CELLS, btran]
+#   else
+            // AADD(&(RES[INDEX]), w) ;
+            AADD((__global float*)(RES+INDEX*ntran+tran), w) ;
+#   endif
+         }
+         
+      } // for tran
+
+      
+#  endif // no ALI *-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
+      
+# endif  // WITH OR WITHOUT CRT
+      
+      
+      // } // RHO>CLIP !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      
+      
+      
+      barrier(CLK_LOCAL_MEM_FENCE) ;
+# if (BRUTE_COOLING>0)
+      not implemented ;
+      // total number of photons in the package as it exits the cell
+      if (lid==0) {
+         float cool = 0.0f ;
+         for(int i=0; i<CHANNELS; i++) cool += NTRUE[i] ;
+         COOL[INDEX] += cool ; // cooling of cell INDEX --- each work group distinct rays => no need for atomics
+      }
+# endif
+      
+      
+      
+      
+      // Updates at the end of the step, POS has been already updated, OTL and OTI point to the new cell
+      INDEX   =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1) ;
+      
+# if (BRUTE_COOLING>0)  // heating of the next cell, once INDEX has been updated
+      if (INDEX>=0) {
+         if (lid==0)  COOL[INDEX] -= cool ; // heating of the next cell
+      }
+# endif
+      
+      if (INDEX>=0) {
+         if (RHO[INDEX]<=0.0f) { // we stepped to a refined cell (GetStep goes only to a cell OTL<=OTLO)
+            continue ;           // step down one level at the beginning of the main loop
+         }
+      }
+      
+      
+      if (OTL<RL) {        // we are up to a level where this ray no longer exists
+         INDEX=-1 ;        
+      } else {      
+         if (INDEX<0) {    // ray exits the cloud... possibly continues on the other side
+            if (POS.x>=NX  ) {   if (LEADING!=0)  POS.x =    EPS ;   }
+            if (POS.x<=ZERO) {   if (LEADING!=1)  POS.x = NX-EPS ;   } 
+            if (POS.y>=NY  ) {   if (LEADING!=2)  POS.y =    EPS ;   }
+            if (POS.y<=ZERO) {   if (LEADING!=3)  POS.y = NY-EPS ;   } 
+            if (POS.z>=NZ  ) {   if (LEADING!=4)  POS.z =    EPS ;   }
+            if (POS.z<=ZERO) {   if (LEADING!=5)  POS.z = NZ-EPS ;   } 
+            IndexGR(&POS, &OTL, &OTI, RHO, OFF) ;  // we remain in a root-grid cell => OTL==0 !
+            INDEX =  (OTI>=0) ? (OFF[OTL]+OTI) : (-1)  ;  
+            if (INDEX>=0) {   // new level-0 ray started on the opposite side (may be a parent cell)
+               RL = 0 ;  OTLO = 0 ; 
+               // we had already barrier after the previous NTRUE update
+               for(int tran=0; tran<btran; tran++) {
+                  for(int i=lid; i<CHANNELS; i+=ls)  NTRUE[tran*CHANNELS+i] = BG[tran] * DIRWEI ;    // NTRUE[btran, CHANNELS]
+               }
+               barrier(CLK_LOCAL_MEM_FENCE) ;
+# if (BRUTE_COOLING>0)
+               not implemented ;
+               if (lid==0) {
+                  dr = BG*DIRWEI*CHANNELS ;  COOL[INDEX] -= dr ; // heating of the entered cell
+               }
+# endif
+               continue ;
+            }
+         } // if INDEX<0
+      }
+      
+
+      
+      // rescale on every change of resolution
+      if ((INDEX>=0)&&(OTL<OTLO)) {   // @s ray continues at a lower hierarchy level => NTRUE may have to be scaled
+         dr = pown(4.0f, OTLO-OTL) ;  // scale on every change of resolution
+         for(int i=lid; i<btran*CHANNELS; i+=ls)  NTRUE[i] *= dr ;  // NTRUE[btran, CHANNELS]
+         continue ;  // we went to lower level => this cell is a leaf
+      }
+      
+      
+      // if INDEX still negative, try to take a new ray from the buffer
+      // 0   1     2  3  4  6     ...       NTRUE[btran, CHANNELS] 
+      // OTL OTI   x  y  z  RL    x y z RL                  
+      if ((INDEX<0)&&(NBUF>0)) {            // NBUF>0 => at least one ray exists in the buffer
+         barrier(CLK_GLOBAL_MEM_FENCE) ;    // all work items access BUFFER
+         c1    =  (NBUF-1)*(26+btran*CHANNELS) ;  // 8+CHANNELS elements per buffer entry
+         OTL   =  (int)BUFFER[c1+0] ;       // OTL ...
+         OTLO  =  OTL ;                     // ???
+         OTI   =  F2I(BUFFER[c1+1]) ;       // and OTI of the ray that was split
+         for(sr=5; sr>=0; sr--) {         
+            dr    =  BUFFER[c1+2+4*sr] ;    // read dr
+            if (dr>-0.1f) break ;           // found a ray
+         }
+         POS.x   =  dr ;
+         POS.y   =  BUFFER[c1+3+4*sr] ;  
+         POS.z   =  BUFFER[c1+4+4*sr] ;
+         RL      =  BUFFER[c1+5+4*sr] ;
+         SID     =  4*(int)floor(POS.z) + 2*(int)floor(POS.y) + (int)floor(POS.x) ;   // cell in octet
+         OTI     =  8*(int)(OTI/8) + SID ;        // OTI in the buffer was for the original ray that was split
+         INDEX   =  OFF[OTL]+OTI ;                // global index -- must be >=0 !!!
+         // copy NTRUE --- values in BUFFER have already been divided by four
+         barrier(CLK_GLOBAL_MEM_FENCE) ;          // all have read BUFFER
+         if (lid==0)  BUFFER[c1+2+4*sr] = -1.0f ; // mark as used
+         if (sr==0)   NBUF -= 1 ;
+         // Note !!!     NTRUE[btran*CHANNELS],   BUFFER[26+btran*CHANNELS]
+         c1     +=  26 ;                          // start of the btran*CHANNELS block
+         // NTRUE[btran, CHANNELS]
+         for(int i=lid; i<btran*CHANNELS; i+=ls)  NTRUE[i] = BUFFER[c1+i] ;  // NTRUE correct for level OTL
+         barrier(CLK_LOCAL_MEM_FENCE) ;         
+         // note - this ray be inside a parent cell => handled at the beginnign of the main loop
+      } // (INDEX<=0)&(NBUF>0)
+      
+      
+   } // while INDEX>=0
+   
+   
+   // printf("MULTITRAN FINAL ESC  ==> %10.3e %10.3e %10.3e\n", ESC[0], ESC[1], ESC[2]) ;
+   
+}  // end of UpdateOT4Multitran()
+
+
+#endif
 
 
 
@@ -10692,7 +11672,7 @@ __kernel void UpdateOT5(  //
 # if 0
       nb_nb     =  NI[2*INDEX+1] ;
 # else
-      nb_nb     =  max(1.0e-30f, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
+      nb_nb     =  max(MASERCLIP, NI[2*INDEX+1]) ; // $$$ KILL MASERS 
 # endif
       
       // emitted photons divided between passing packages as before
@@ -10781,7 +11761,7 @@ __kernel void UpdateOT5(  //
 #   if 0
          factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
 #   else
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+         factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
 #   endif
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
          absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed
@@ -10815,7 +11795,7 @@ __kernel void UpdateOT5(  //
 #   if 0
          factor          =  clamp(factor, -1.0e-12f, 1.0f) ;  // $$$
 #   else
-         factor          =  clamp(factor,  1.0e-30f, 1.0f) ;  // KILL MASERS $$$
+         factor          =  clamp(factor,  MASERCLIP, 1.0f) ;  // KILL MASERS $$$
 #   endif
          escape          =  tmp_emit*factor ;    // emitted photons that escape current cell
          absorbed        =  NTRUE[i]*factor ;    // incoming photons that are absorbed

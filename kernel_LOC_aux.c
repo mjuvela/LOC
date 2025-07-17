@@ -834,6 +834,9 @@ void __kernel SolveCL(
    __global float  *V =  &NI[id*LEVELS] ;   // temporary storage for solved NI vector
    __local  ushort  P[LOCAL*LEVELS] ;       // 64 workers x 100 levels x 2B  = 12.5 kB
    __local  ushort *pivot = &P[lid*LEVELS] ;
+
+
+   // for(int i=0; i<LEVELS*LEVELS; i++) MATRIX[i] = 0.0f ;
    
 #if 0
    if (RHO[id]<=CLIP)  {  // skip calculation for cells RHO<CLIP
@@ -873,6 +876,7 @@ void __kernel SolveCL(
          for(u=0; u<NCUL; u++) {  // find the row  u  in collisional coefficient table  (i,j)
             if ((CUL[2*u]==i)&(CUL[2*u+1]==j)) break ;  // <-- CUL OF THE FIRST PARTNER ONLY !!!
          }
+         if (u>=NCUL) continue ; // at least some test cases have with missing collisional rates !!!!
          tmp = 0.0f ;
          for(int p=0; p<PARTNERS; p++) { // get_C has the correct row from C, NTKIN element vector DOWNWARDS !!
             tmp += CABU[id*PARTNERS+p]*get_C(TKIN[id], NTKIN, &MOL_TKIN[p*NTKIN], &C[p*NCUL*NTKIN + u*NTKIN]) ;
@@ -891,6 +895,23 @@ void __kernel SolveCL(
          MATRIX[IDX(i,j)] = tmp*RHO[id] ;    //  IDX(j,i) = transition j <-- i
       }
    }
+   
+
+
+#if 0
+   if (id==100) {
+      printf("\n COLLISIONS =================>\n") ;
+      for(int j=0; j<LEVELS; j++) {      // row
+         for(int i=0; i<LEVELS; i++) {   // column
+            printf(" %10.3e", MATRIX[IDX(j,i)]) ;
+         }
+         printf("\n") ;
+      }
+      printf("\nright side  0,0, ..., %.4e, RHO=%.3e, ABU=%.3e\n", VECTOR[LEVELS-1], RHO[id], ABU[id]) ;
+   }
+#endif
+
+
    
    
 #if (WITH_ALI>0)
@@ -928,7 +949,6 @@ void __kernel SolveCL(
    for(int i=0; i<LEVELS; i++)  MATRIX[IDX(LEVELS-1, i)]  = -MATRIX[IDX(0,0)] ;
    for(int i=0; i<LEVELS; i++)  VECTOR[i] = 0.0f ;
           
-   
    // one cannot drop ABU from here or the solution fails for test_3d_ot.py
    // ... but it will also fail if RHO*ABU scaling is kept and ABU is extremely small!!
    // In test_3d_ot.py, eq.eq. is ok for scaling - replacing ABU-  with  1e-3 ... 1e-22

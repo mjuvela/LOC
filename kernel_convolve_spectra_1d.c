@@ -27,13 +27,13 @@ __kernel void Convolve(const int NSPE,
    for(int i=-DI; i<=+DI; i++) {         // stepping over area [-3*FWHM, +3*FWHM]                 |  
       for(int j=-DI; j<=+DI; j++) {      // one unit in (i,j) corresponds to distance d           V
          r  =  i*i+j*j ;                 // squared distance from the beam centre,         in units of d
-	 // [r] = in SPE steps
-	 //    real distance <=  DI * d =  DI * 3*fwhm/DI  =  3*fwhm, in SPE steps
+         // [r] = in SPE steps
+         //    real distance <=  DI * d =  DI * 3*fwhm/DI  =  3*fwhm, in SPE steps
          w  =  exp(K*r) ;                // Gaussian weight
          W +=  w ;
-         // r = distance from the cloud centre, (i,j) = offset from that tot the actual pointing for one LOS
+         // r = distance from the cloud centre, (i,j) = offset from that to the actual pointing for one LOS
          r  =  sqrt((float)(j*j*d*d+(i*d+id)*(i*d+id))) ;  // pointing centre (id,0), offsets over the (beam) ~ (i,j)
-	 //   d = 3*fwhm/DI  =>   r distance <=  DI*d = 3*fwhm in SPE steps 
+         //   d = 3*fwhm/DI  =>   r distance <=  DI*d = 3*fwhm in SPE steps 
 	 
          // id  = offset in units == step between originally computed spectra = RADIUS/(NSPE-1)
          // i,j = local offsets in units [d] = small step used to sample the beam area

@@ -312,6 +312,7 @@ print("-------------------------------------------------------------------------
 # Set up kernels
 kernel_clear   =  program.Clear
 kernel_paths   =  None   # only if PLWEIGHT in use... no we need this also to get correct PACKETS !!
+kernel_sim_multitran = None
 if (OCTREE>0):
     if (OCTREE==1): 
         print("USING  program.UpdateOT1: offs %d" % INI['offsets'])
@@ -327,8 +328,9 @@ if (OCTREE>0):
         kernel_paths =  program.PathsOT3
     elif (OCTREE==4):
         print("USING  program.UpdateOT4:  ALI %d" % ( WITH_ALI))
-        kernel_sim   =  program.UpdateOT4
-        kernel_paths =  program.PathsOT4
+        kernel_sim    =  program.UpdateOT4
+        kernel_sim_multitran = program.UpdateOT4Multitran
+        kernel_paths  =  program.PathsOT4
     elif (OCTREE==5):
         print("USING  program.UpdateOT4:  ALI %d" % ( WITH_ALI))
         kernel_sim   =  program.UpdateOT5
@@ -336,7 +338,7 @@ if (OCTREE>0):
     elif (OCTREE==40):
         print("USING  program.UpdateOT40:  ALI %d" % ( WITH_ALI))
         kernel_sim   =  program.UpdateOT40
-        kernel_paths =  program.PathsOT40        
+        kernel_paths =  program.PathsOT40
 else:
     print("USING  program.Update")
     kernel_sim                           =  program.Update
@@ -426,6 +428,19 @@ else:
             #  18     19     20     21     22     
             # LCELLS, OFF,   PAR,   RHO    BUFFER 
             None,     None,  None,  None,  None ])
+            ######
+            if (kernel_sim_multitran):
+                kernel_sim_multitran.set_scalar_arg_dtypes([
+                    # 0       1      2      3     4     5           6           7            8           9           
+                    # gid0    PL     CLOUD  GAU   LIM   Aul         A_b         GN           APL         BG          
+                    np.int32, None,  None,  None, None, None,       None,       None,        np.float32, None, 
+                    #  10       11          12         13      14       15     16     17     18     19
+                    #  DIRWEI   EWEI        LEADING    POS0    DIR      NI     NBNB   RES    ESC    NTRUES 
+                    np.float32, np.float32, np.int32,  REAL3,  FLOAT3,  None,  None,  None,  None,  None,
+                    #  20     21     22     23     24      25        26
+                    # LCELLS, OFF,   PAR,   RHO    BUFFER  ntran     btran
+                    None,     None,  None,  None,  None,   np.int32, np.int32 ])
+            
         else:
             kernel_sim.set_scalar_arg_dtypes([
             # 0       1      2     3     4      5           6           7           8              
@@ -520,9 +535,9 @@ else:
     # On the host side, CLOUD is the second largest array after NI_ARRAY.
     # Here we drop CLOUD before the NI_ARRAY is allocated.
     if (WITH_HALF==0):
-        CLOUD_buf =  cl.Buffer(context, mf.READ_ONLY, 4*4*CELLS)   # vx, vy, vz, sigma
+        CLOUD_buf =  cl.Buffer(context, mf.READ_ONLY, 4*4*np.int64(CELLS))   # vx, vy, vz, sigma
     else:
-        CLOUD_buf =  cl.Buffer(context, mf.READ_ONLY, 2*4*CELLS)   # vx, vy, vz, sigma
+        CLOUD_buf =  cl.Buffer(context, mf.READ_ONLY, 2*4*np.int64(CELLS))   # vx, vy, vz, sigma
     cl.enqueue_copy(queue, CLOUD_buf, CLOUD)
     CLOUD = None
 
@@ -587,8 +602,7 @@ for i in range(PARTNERS):
 MOL_C_buf  = cl.Buffer(context, mf.READ_ONLY, 4*PARTNERS*NCUL*NTKIN)
 cl.enqueue_copy(queue, MOL_C_buf, C)        
 # abundance of collisional partners,  MOL.CABU[PARTNERS]
-# MOL_CABU_buf = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=MOL.CABU)    
-# new buffer for matrices and the right side of the equilibriumm equations
+# new buffer for matrices and the right side of the equilibrium equations
 BATCH        =  max([1,CELLS//max([LEVELS, TRANSITIONS])]) # now ESC, SIJ fit in NI_buf
 BATCH        =  min([BATCH, CELLS, 16384])        #  16384*100**2 = 0.6 GB
 ##  BATCH    =  16384  # @@@
@@ -815,7 +829,9 @@ if (INI['iterations']>0):
                 if (0):
                     if (len(m[0])>0):
                         print("  <PL> root grid: %.3e +- %.3e" % (mean(PL[0:NX*NY*NZ][m[0]]), std(PL[0:NX*NY*NZ][m[0]])))
-             
+                        
+    ## end of for idir
+    
                     
         ### break
     ### end for idir
@@ -1049,6 +1065,7 @@ def Simulate():
         LEV_COOL = zeros(CELLS, float32)
         hf       = MOL.F*PLANCK/VOLUME
     if (INI['verbose']<2):  sys.stdout.write('      ')
+    
     for tran in range(MOL.TRANSITIONS): # ------>
         t_tran        =  time.time()
         upper, lower  =  MOL.T2L(tran)
@@ -1063,23 +1080,23 @@ def Simulate():
             for icmp in range(OLBAND.BANDS):
                 if (tran in OLBAND.TRAN[icmp]): skip = True
             if (skip): continue
-        
-        if (1):
-            # 2021-01-13 -- weighting directly by cos(theta)/DIRWEI where DIRWEI = sum(cos(theta)) for each side
-            #  BGPHOT = number of photons per a single surface element, not the whole cloud
-            #  ***AND*** only photons into the solid angle where the largest vector component is 
-            #            perpendicular to the surface element !
-            #            instead of pi, integral is 1.74080 +-   0.00016  => total number of photons per LEADING
-            BGPHOT        =  Planck(freq, Tbg)* 1.74080         /(PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
-        else:
-            #  BGPHOT = total number of photons entering the cloud via area == AREA
-            BGPHOT        =  Planck(freq, Tbg)* pi      *  AREA /(PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
-            # the number of photons that should be assigned an individual packages ON AVERAGE
-            # individual packages have additional relative weights, dirwei/DIRWEI == cos(theta) / <cos(theta)>
-            BG        =  BGPHOT/PACKETS    
 
-        # print("TRAN=%2d  =>  BGPHOT = BG*PACKETS = %12.4e" % (tran, BGPHOT))
-        
+        # print("\n**** Simulate()  ==>  %2d -> %2d" % (upper, lower))
+            
+        # 2021-01-13 -- weighting directly by cos(theta)/DIRWEI where DIRWEI = sum(cos(theta)) for each side
+        #  BGPHOT = number of photons per a single surface element, not the whole cloud
+        #  ***AND*** only photons into the solid angle where the largest vector component is 
+        #            perpendicular to the surface element !
+        #            instead of pi, integral is 1.74080 +-   0.00016  => total number of photons per LEADING
+        #  BG =  BGPHOT * cos(theta) / sum(cos(theta))
+        BGPHOT   =  Planck(freq, Tbg)* 1.74080     / (PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
+
+        if (ONESHOT==0):
+            # 2025-07-08  => now ONESHOT=0 gives same results as ONESHOT=1,
+            # but probably only if offs==1
+            assert(INI['offsets']==1)
+            BGPHOT *= 4.0
+
         if (HFS):
             nchn = BAND[tran].Channels()
             ncmp = BAND[tran].N
@@ -1155,7 +1172,8 @@ def Simulate():
                     else:                     
                         dirwei   =  fabs(DIR['z']) / DIRWEI[LEADING]
                         ewei     =  float32(EWEI / abs(DIR['z']))                    
-                    BG     = BGPHOT * dirwei
+                    BG     = BGPHOT * dirwei  # this is per surface element => ok for ONESHOT==1
+                    
                     # print("idir = %3d   ioff = %3d  =>   BG = %.3e" % (idir, ioff, BG))
                     SUM_DIRWEI += dirwei
                     dirwei = 1.0        # this is the weight factor that goes to kernel... now not used
@@ -1237,14 +1255,14 @@ def Simulate():
                                 # print("idir=%2d, kernel_sim %d/%d" %(idir, 1+ibatch, niter))
                                 if (PLWEIGHT>0):
                                     kernel_sim(queue, [GLOBAL,], [LOCAL,],  ibatch*NWG, PL_buf, CLOUD_buf, 
-                                    GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, BG, dirwei, ewei,
-                                    LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf,
-                                    LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)
+                                               GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, BG, dirwei, ewei,
+                                               LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf,
+                                               LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)
                                 else:
                                     kernel_sim(queue, [GLOBAL,], [LOCAL,],  ibatch*NWG, CLOUD_buf,
-                                    GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, BG, dirwei, ewei,
-                                    LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf,
-                                    LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)
+                                               GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, BG, dirwei, ewei,
+                                               LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf,
+                                               LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)
                                 
                             # sys.exit()
                                 
@@ -1479,6 +1497,10 @@ def Simulate():
         if (0):
             print("       tran = %3d  = %2d - %2d  => <SIJ> = %.3e   <ESC> = %.3e" % 
             (tran, upper, lower, mean(WRK[:,0]), mean(WRK[:,1])))
+
+
+    # --- end of loop over transitions ---
+
             
     if (INI['verbose']<2):
         sys.stdout.write('\n')
@@ -1514,12 +1536,482 @@ def Simulate():
         sys.exit()
         
 
+                        
+    # <--- for tran ---
+    
+    
+    if (COOLING==2):
+        print("BRUTE COOLING: %10.3e" % (sum(SUM_COOL)/CELLS))
+        fpb = open('brute.cooling', 'wb')
+        asarray(SUM_COOL, float32).tofile(fpb)
+        fpb.close()
+        SUM_COOL = []
+        LEV_COOL = []
+        
+
+
+
+
+def SimulateMultitran(ntran=2):
+    """
+    A version of the simulation routine where the kernel calculates several transitions at a time.
+    ntran = number of transitions processed with a single kernel call
+    """
+    global INI, MOL, queue, LOCAL, GLOBAL, WIDTH, VOLUME, GL, COOLING, NSIDE, HFS
+    global GAU_buf, CLOUD_buf, LIM_buf, PL, EWEI, PL_buf
+    global ESC_ARRAY, SIJ_ARRAY    #  [CELLS, TRANSITIONS]
+    global PACKETS, OLBAND
+    global RES_buf, NI_buf         #  RES_buf[CELLS, ntran],  NI_buf[CELLS, ntran]
+    global NTRUE_buf, BUFFER_buf
+    print("*** SimulateMultitran")
+    
+    del    RES_buf, NI_buf, NTRUE_buf, BUFFER_buf
+
+    btran      =  ntran     # can change for the last batch, if TRANSITIONS % ntran != 0
+    Aul_buf    =  cl.Buffer(context, mf.READ_ONLY, 4*ntran)
+    Ab_buf     =  cl.Buffer(context, mf.READ_ONLY, 4*ntran)
+    GN_buf     =  cl.Buffer(context, mf.READ_ONLY, 4*ntran)
+    BG_buf     =  cl.Buffer(context, mf.READ_ONLY, 4*ntran)
+    # NTRUE_buf =  cl.Buffer(context, mf.READ_WRITE, 4*max([INI['points'][0], NRAY])*MAXCHN)
+    NTRUE_buf  =  cl.Buffer(context, mf.READ_WRITE,  4*max([INI['points'][0], NRAY])*MAXCHN*ntran)
+    NI_buf     =  cl.Buffer(context, mf.READ_ONLY,   4*CELLS*ntran)      # NI_buf[CELLS, TRANSITIONS]
+    NBNB_buf   =  cl.Buffer(context, mf.READ_ONLY,   4*CELLS*ntran)      # NBNB_buf[CELLS, TRANSITIONS]
+    RES_buf    =  cl.Buffer(context, mf.READ_WRITE,  4*CELLS*ntran)      # SIJ   RES[CELLS, btran]    
+    if (WITH_ALI>0):
+        ESC_buf  =  cl.Buffer(context, mf.READ_WRITE,  4*CELLS*ntran)    # ESC   ESC[CELLS, btran]
+    else:
+        ESC_buf  =  cl.Buffer(context, mf.READ_WRITE,  4)
+    ###
+    BUFFER_buf  = cl.Buffer(context, mf.READ_WRITE, 4*NWG*(26+ntran*CHANNELS)*MAX_NBUF)
+    
+    niter   =  0
+    ncmp    =  1
+    tmp_1   =  C_LIGHT*C_LIGHT/(8.0*pi)
+    Tbg     =  INI['Tbg']
+    SUM_COOL, LEV_COOL, hf = [], [], []
+    if (COOLING==2):
+        assert(1==0)
+        SUM_COOL = zeros(CELLS, float32)
+        LEV_COOL = zeros(CELLS, float32)
+        hf       = MOL.F*PLANCK/VOLUME
+    if (INI['verbose']<2):  sys.stdout.write('      ')
+
+
+    Aul    = zeros(ntran, float32)
+    Ab     = zeros(ntran, float32)
+    GNORM  = zeros(ntran, float32)
+    BG     = zeros(ntran, float32)
+    gg     = zeros(ntran, float32)
+    freq   = zeros(ntran, float32)
+    BGPHOT = zeros(ntran, float32)
+    BG     = zeros(ntran, float32)
+    WRK    = zeros((CELLS, ntran), float32)
+    
+    tranO = 0
+    while(tranO<MOL.TRANSITIONS):
+        tranA = tranO
+        tranO = min([tranA+btran, MOL.TRANSITIONS])   # [tranA, tranB[
+        btran = tranO - tranA                         # actual number of transitions
+        print("\nTransitions %d - %d " % (tranA, tranO))
+        
+        t_tran        =  time.time()
+        
+        for tran in range(tranA, tranO):
+            j             =  tran-tranA
+            upper, lower  =  MOL.T2L(tran)
+            Aul[j]        =  MOL.A[tran]
+            Ab[j]         =  MOL.BB[tran]
+            freq[j]       =  MOL.F[tran]
+            BG[j]         =  1.0            
+            BGPHOT[j]     =  Planck(freq[j], Tbg)* 1.74080         /(PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
+            GNORM[j]      = (C_LIGHT/(1.0e5*WIDTH*freq[j])) * GL  # GRID_LENGTH multiplied to gauss norm
+            WRK[:,j]      =  NI_ARRAY[:, upper]    # NI_ARRAY[CELLS, LEVELS],  WRK[CELLS, ntran]
+
+        if (ONESHOT==0):
+            # 2025-07-08  => now ONESHOT=0 gives same results as ONESHOT=1,
+            # but probably only if offs==1
+            assert(INI['offsets']==1)
+            BGPHOT *= 4.0
             
+        cl.enqueue_copy(queue, NI_buf,  WRK)       #  WRK[CELLS, ntran] ->  NI_buf[CELLS, ntran]
+        cl.enqueue_copy(queue, Aul_buf, Aul)       #  Aul[ntran]
+        cl.enqueue_copy(queue, Ab_buf,  Ab)        #  Ab[ntran]
+        cl.enqueue_copy(queue, GN_buf,  GNORM)     #  GNORM[ntran]
+        
+        # Upload NB_NB[tran] values
+        for tran in range(tranA, tranO):
+            upper, lower  =  MOL.T2L(tran)
+            j             =  tran-tranA
+            print("  tran = %d  .... %02d -> %02d   BG %10.3e" % (tran, upper, lower, BGPHOT[j]))
+            tmp           =  tmp_1 * Aul[j] * (NI_ARRAY[:,lower]*MOL.GG[tran]-NI_ARRAY[:,upper]) / (freq[j]*freq[j])
+            if (0):
+                tmp  = np.clip(tmp, -1.0e-12, 1.0e32)      # kernel still may have clamp on tau
+                tmp[nonzero(abs(tmp)<1.0e-32)] = 1.0e-32   # nb_nb -> one must not divide by zero  $$$
+            else:
+                tmp = np.clip(tmp, 1.0e-25, 1.0e32)        # KILL ALL MASERS  $$$            
+            WRK[:, j]     =  tmp                           # WRK[CELLS, ntran]
+        cl.enqueue_copy(queue, NBNB_buf, WRK)              # NB_NB_buf[CELLS, ntran]
+
+        
+        if (WITH_OVERLAP): # in Simulate() skip transitions that are part of OVERLAP lines
+            assert(1==0)
+            skip = False
+            for icmp in range(OLBAND.BANDS):
+                if (tran in OLBAND.TRAN[icmp]): skip = True
+            if (skip): continue
+                            
+        if (HFS):
+            assert(1==0)
+            nchn = BAND[tran].Channels()
+            ncmp = BAND[tran].N
+            for i in range(ncmp):
+                HF[i]['x']  =  round(BAND[tran].VELOCITY[i]/WIDTH) # offset in channels
+                HF[i]['y']  =  BAND[tran].WEIGHT[i]
+            HF[0:ncmp]['y']  /= sum(HF[0:ncmp]['y'])
+            cl.enqueue_copy(queue, HF_buf, HF)
+            
+        if (WITH_CRT):
+            assert(1==0)
+            cl.enqueue_copy(queue, CRT_TAU_buf, asarray(CRT_TAU[:,tran].copy(), float32))
+            cl.enqueue_copy(queue, CRT_EMI_buf, asarray(CRT_EMI[:,tran].copy(), float32))
+                            
+        if (INI['verbose']<2):
+             sys.stdout.write(' %2d' % tran)
+             sys.stdout.flush()
+        
+        WRK[:,:] = 0.0
+        cl.enqueue_copy(queue, RES_buf, WRK)   #   RES[CELLS, btran]  ~  SIJ
+        cl.enqueue_copy(queue, ESC_buf, WRK)   #   ESC[CELLS, btran]  ~  ESC
+    
+        
+        offs  =  INI['offsets']  # default was 1, one ray per cell
+        t000  =  time.time()
+
+
+        SUM_DIRWEI = 0.0   # weight ~ cos(theta)/sum(cos(theta)) ... should sum to 1.0 for each side, 6.0 total
+
+        
+        for idir in range(NDIR):            
+            inner_loop = 4*offs*offs
+            if (ONESHOT): inner_loop = 1    # for  OCTREE=4, OCTREE=40
+            for ioff in range(inner_loop):  # 4 staggered initial positions over 2x2 cells -- if ONESHOT==0
+                
+                POS, DIR, LEADING  =  GetHealpixDirection(NSIDE, ioff, idir, NX, NY, NZ, offs, DOUBLE_POS) # < 0.001 seconds !
+                dirwei, ewei = 1.0, 1.0                
+
+                # 2021-01-13 --- BGPHOT * cos(theta)/DIRWEI, DIRWEI = sum(cos(theta)) for each side separately
+                # there is no change at this point, except that DIRWEI is sum, not the average cos(theta)
+                # *AND* BG is computed without dependence on the PACKETS variable
+                if (LEADING in   [0, 1]):    
+                    dirwei   =  fabs(DIR['x']) / DIRWEI[LEADING]   # cos(theta)/<cos(theta)>
+                    ewei     =  float32(EWEI / abs(DIR['x']))      # (1/cosT) / <1/cosT> / NDIR ... not used !!
+                elif (LEADING in [2, 3]):  
+                    dirwei   =  fabs(DIR['y']) / DIRWEI[LEADING]
+                    ewei     =  float32(EWEI / abs(DIR['y']))
+                else:                     
+                    dirwei   =  fabs(DIR['z']) / DIRWEI[LEADING]
+                    ewei     =  float32(EWEI / abs(DIR['z']))                    
+                BG[:]   =  BGPHOT[:] * dirwei
+                # print("idir = %3d   ioff = %3d  =>   BG = %.3e" % (idir, ioff, BG))
+                SUM_DIRWEI += dirwei
+                dirwei = 1.0        # this is the weight factor that goes to kernel... now not used
+                        
+                cl.enqueue_copy(queue, BG_buf, BG)
+                
+                # print("         idir %3d  =>  dirwei %8.5f" % (idir, dirwei))
+                               
+                if (ncmp==1):
+                    if (WITH_CRT):
+                        assert(1==0)
+                        niter = NRAY//GLOBAL
+                        if (NRAY%GLOBAL!=0): niter += 1
+                        for ibatch in range(niter):                                
+                            kernel_sim(queue, [GLOBAL,], [LOCAL,],  
+                            # 0             1          2        3        4    5   6      7     8  
+                            ibatch*GLOBAL,  CLOUD_buf, GAU_buf, LIM_buf, Aul, Ab, GNORM, None, APL,
+                            # 9   10      11    12       13   14   15      16       17        
+                            BG,   dirwei, ewei, LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf,
+                            # 18         19         
+                            CRT_TAU_buf, CRT_EMI_buf)
+                    else:
+                        if (OCTREE<1):
+                            assert(1==0)
+                            niter = NRAY//GLOBAL
+                            if (NRAY%GLOBAL!=0): niter += 1
+                            for ibatch in range(niter):
+                                kernel_sim(queue, [GLOBAL,], [LOCAL,],
+                                # 0            1          2        3        4    5 
+                                ibatch*GLOBAL, CLOUD_buf, GAU_buf, LIM_buf, Aul, Ab,
+                                # 6    7       8    9   10      11    12       13   14   15      16       17      
+                                GNORM, PL_buf, APL, BG, dirwei, ewei, LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf)
+                        elif (OCTREE==1):
+                            # OCTREE==1 does always calculate paths but we choose not to use those??
+                            assert(1==0)
+                            if (PLWEIGHT<1):
+                                #                                       0          1        2        3    4  
+                                kernel_sim(queue, [GLOBAL,], [LOCAL,],  CLOUD_buf, GAU_buf, LIM_buf, Aul, Ab,
+                                # 5    6    7   8       9     10       11   12   13      14       15       
+                                GNORM, APL, BG, dirwei, ewei, LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf, 
+                                #  16       17       18       19      
+                                LCELLS_buf, OFF_buf, PAR_buf, RHO_buf)
+                            else:
+                                #                                      0       1          2        3        4    5  
+                                kernel_sim(queue, [GLOBAL,], [LOCAL,], PL_buf, CLOUD_buf, GAU_buf, LIM_buf, Aul, Ab,
+                                # 5    6    7   8       9     10       11   12   13      14       15       
+                                GNORM, APL, BG, dirwei, ewei, LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf, 
+                                #  16       17       18       19    
+                                LCELLS_buf, OFF_buf, PAR_buf, RHO_buf)                                
+                        elif (OCTREE in [2,3]): # OCTREE=2, OCTREE=3
+                            assert(1==0)
+                            #                                       0       1          2        3        4    5   
+                            kernel_sim(queue, [GLOBAL,], [LOCAL,],  PL_buf, CLOUD_buf, GAU_buf, LIM_buf, Aul, Ab,
+                            # 6    7    8   9       10    11       12   13   14      15       16        
+                            GNORM, APL, BG, dirwei, ewei, LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf, 
+                            #  17       18       19       20        21        
+                            LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)
+                        elif (OCTREE in [4,5]):
+                            niter = NRAY//NWG
+                            if (NRAY%NWG!=0): niter += 1
+                            for ibatch in range(niter):                                
+                                # print("idir=%2d, kernel_sim %d/%d" %(idir, 1+ibatch, niter))
+                                # print("\n\n\nOCTREE = ", OCTREE)
+                                if (PLWEIGHT>0):
+                                    kernel_sim_multitran(queue, [GLOBAL,], [LOCAL,],
+                                                         ibatch*NWG, PL_buf, CLOUD_buf, GAU_buf, LIM_buf, Aul_buf, Ab_buf,
+                                                         GN_buf, APL, BG_buf, dirwei, ewei, LEADING, POS, DIR, NI_buf,
+                                                         NBNB_buf, RES_buf, ESC_buf, NTRUE_buf,
+                                                         LCELLS_buf, OFF_buf, PAR_buf, RHO_buf, BUFFER_buf, ntran, btran)
+                                else:
+                                    kernel_sim(queue, [GLOBAL,], [LOCAL,],  ibatch*NWG, CLOUD_buf,
+                                    GAU_buf, LIM_buf, Aul_buf, Ab_buf, GNORM_buf, APL, BG_buf, dirwei, ewei,
+                                    LEADING, POS, DIR, NI_buf, NBNB_buf, RES_buf, ESC_buf, NTRUE_buf,
+                                    LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)                                
+                            # sys.exit()                                
+                        elif (OCTREE in [40,]):
+                            assert(1==0)
+                            # with option ONESHOT, kernel should loop over all ray position, not only every other
+                            niter = NRAY//GLOBAL
+                            if (NRAY%GLOBAL!=0): niter += 1
+                            for ibatch in range(niter):
+                                # print("kernel_sim batch %d/%d" %(1+ibatch, niter))
+                                kernel_sim(queue, [GLOBAL,], [LOCAL,],  ibatch*GLOBAL, PL_buf, CLOUD_buf, 
+                                GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, BG, dirwei, ewei,
+                                LEADING, POS, DIR, NI_buf, RES_buf, NTRUE_buf,
+                                LCELLS_buf, OFF_buf, PAR_buf, RHO_buf,  BUFFER_buf)
+                            
+                else:
+                    assert(1==0)
+                    if (OCTREE<1): #  GLOBAL >= NRAY
+                        #                                       0          1        2        3    4   5      6   
+                        kernel_hf(queue, [GLOBAL,], [LOCAL,],   CLOUD_buf, GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, 
+                        # 7  8       9     10       11   12   13      14       15    16    17      18      
+                        BG,  dirwei, ewei, LEADING, POS, DIR, NI_buf, RES_buf, nchn, ncmp, HF_buf, NTRUE_buf,
+                        PROFILE_buf)
+                    else:
+                        if (OCTREE==4):
+                            niter = NRAY//NWG
+                            if (NRAY%NWG!=0): niter += 1
+                            for ibatch in range(niter):
+                                kernel_hf(queue, [GLOBAL,], [LOCAL,],  ibatch*NWG, PL_buf, CLOUD_buf, 
+                                GAU_buf, LIM_buf, Aul, Ab, GNORM, APL, BG, dirwei, ewei,
+                                LEADING, POS, DIR, NI_buf,  nchn, ncmp, HF_buf, 
+                                RES_buf, NTRUE_buf, LCELLS_buf, OFF_buf, PAR_buf, RHO_buf, BUFFER_buf)
+                        else:
+                            print("HFS + OCTREE%d not yet implemented" % OCTREE), sys.exit()
+                        
+                queue.finish()
+                
+        # end of loop over NDIR
+
+
+        # for plot_pl.py
+        if (0):  # debugging ... see that Update has the same PL as Path
+            print("SAVING PL.dat")
+            PL.tofile('PL.dat')
+            cl.enqueue_copy(queue, PL, PL_buf)
+            PL.tofile('PL_zero.dat')
+            sys.exit()
+
+
+
+        if (0):
+            # !!! at this point intentical to the normal calculations
+            m = nonzero(RHO>0.0)
+            print("================================================================================")
+            print("AFTER KERNEL SIJ")
+            cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, btran]
+            for tran in range(btran):
+                sys.stdout.write("TRAN=%d   " % tran)
+                for icell in range(5):
+                    sys.stdout.write("  %10.3e " % (WRK[CELLS-1-icell, tran]))
+                sys.stdout.write('  ==> MEAN %10.3e\n' % mean(WRK[m[0], tran]))
+            print("AFTER KERNEL ESC")
+            cl.enqueue_copy(queue, WRK, ESC_buf)       # ESC[CELLS, btran]
+            for tran in range(btran):
+                sys.stdout.write("TRAN=%d   " % tran)
+                for icell in range(5):
+                    sys.stdout.write("  %10.3e " % (WRK[CELLS-1-icell, tran]))
+                sys.stdout.write('  ==> MEAN %10.3e\n' % mean(WRK[m[0], tran]))
+            print("================================================================================")
+            
+            
+        # PLWEIGHT
+        # - OCTREE=0 -- PLWEIGHT can be 1 (for testing). Update kernel can take PL_buf but only for testing
+        #   and we do not use PL here.
+        # - OCTREE>0, we assume PL is calculated and it is not used only for OCTREE=4, if INI['plweight']==0
+        # post weighting
+        if (WITH_ALI>0):
+            # ... pull RES_buf and ESC_buf
+            if (PLWEIGHT==0):    # assume PLWEIGHT implies OCTREE==0
+                #  Cartesian grid -- no PL weighting, no cell-volume weighting
+                cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, btran]  
+                for tran in range(tranA, tranO):
+                    SIJ_ARRAY[:, tran]                =  WRK[:, tran-tranA]
+                cl.enqueue_copy(queue, WRK, ESC_buf)       # ESC[CELLS, btran]
+                for tran in range(tranA,tranO):
+                    ESC_ARRAY[:, tran]                =  WRK[:, tran-tranA]
+            else:
+                if (OCTREE==0):   # regular Cartesian but PLWEIGHT=1 => use PL weighting
+                    # SIJ_ARRAY[:, tran]                =  WRK[:,0] #* APL/PL[:]
+                    # ESC_ARRAY[:, tran]                =  WRK[:,1] #* APL/PL[:]
+                    cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, btran]
+                    for tran in range(tranA, tranO):
+                        SIJ_ARRAY[:, tran]            =  WRK[:, tran-tranA]
+                    cl.enqueue_copy(queue, WRK, ESC_buf)       # RES[CELLS, btran]
+                    for tran in range(tranA,tranO):
+                        ESC_ARRAY[:, tran]            =  WRK[:, tran-tranA] #* APL/PL[:]                    
+                elif (OCTREE in [1,2]):   #  OCTREE=1,2, weight with  (APL/PL) * f(level)
+                    # root level
+                    a, b  =  0, LCELLS[0]
+                    cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, btran]
+                    for tran in range(tranA, tranO):
+                        SIJ_ARRAY[a:b, tran]          =  WRK[a:b, tran-tranA] * (APL/PL[a:b])
+                    for l in range(1, OTL):
+                        a, b                          =  OFF[l], OFF[l]+LCELLS[l]                    
+                        if (OCTREE==1):             k =  8.0**l  # OCTREE1   PL should be  APL/8^l
+                        else:                       k =  2.0**l  # OCTREE2   PL should be  APL/2^l
+                        for tran in range(tranA, tranO):
+                            SIJ_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA] * (1.0/k)  * (APL/PL[a:b])
+                    cl.enqueue_copy(queue, WRK, ESC_buf)       # RES[CELLS, btran]
+                    for tran in range(tranA, tranO):
+                        ESC_ARRAY[a:b, tran]          =  WRK[a:b, tran-tranA] * (APL/PL[a:b])
+                        # loop over other levels                        
+                    for l in range(1, OTL):
+                        a, b                          =  OFF[l], OFF[l]+LCELLS[l]                    
+                        if (OCTREE==1):             k =  8.0**l  # OCTREE1   PL should be  APL/8^l
+                        else:                       k =  2.0**l  # OCTREE2   PL should be  APL/2^l
+                        for tran in range(tranA, tranO):
+                            ESC_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA] * (1.0/k)  * (APL/PL[a:b])
+                else:  # OCTREE 3,4,5,40   --- assuming  it should be  PL[] == APL/2^l ;
+                    if (PLWEIGHT):
+                        #================================================================================
+                        a, b                          =  0, LCELLS[0]
+                        cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, ntran]
+                        for tran in range(tranA, tranO):
+                            SIJ_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA] * APL/PL[a:b]
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]                    
+                            for tran in range(tranA, tranO):
+                                SIJ_ARRAY[a:b, tran]  =  WRK[a:b, tran-tranA] * (APL/2.0**l) /  PL[a:b]
+                        cl.enqueue_copy(queue, WRK, ESC_buf)       # ESC[CELLS, ntran]
+                        a, b                          =  0, LCELLS[0]
+                        for tran in range(tranA, tranO):
+                            ESC_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA] * APL/PL[a:b]
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]                    
+                            for tran in range(tranA, tranO):
+                                ESC_ARRAY[a:b, tran]  =  WRK[a:b, tran-tranA] * (APL/2.0**l) /  PL[a:b]
+                        #================================================================================
+                    else:  # if we rely on PL being correct ~ 0.5^level
+                        # above scaling  APL/2**l/PL translates to 1.0 
+                        a, b                          =  0, LCELLS[0]
+                        cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, btran]
+                        for tran in range(tranA, tranO):
+                            SIJ_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA]
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]                    
+                            cl.enqueue_copy(queue, WRK, RES_buf)       # RES[CELLS, btran]
+                            for tran in range(tranA, tranO):
+                                SIJ_ARRAY[a:b, tran]  =  WRK[a:b, tran-tranA] #### / (2.0**l)
+                        cl.enqueue_copy(queue, WRK, ESC_buf)       # RES[CELLS, btran]
+                        for tran in range(tranA, tranO):
+                            ESC_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA]
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]                    
+                            for tran in range(tranA, tranO):
+                                ESC_ARRAY[a:b, tran]  =  WRK[a:b, tran-tranA] #### / (2.0**l)
+        else:  # no ALI, SIJ only
+            ## WRK.shape = (2, CELLS)         # trickery... we use only first CELLS elements of WRK
+            ## no: WRK[CELLS, btran]
+            cl.enqueue_copy(queue, WRK, RES_buf)      # SIJ[CELLS, btran] only
+            if (PLWEIGHT==0):              # PLWEIGHT==0 implies OCTREE=0, Cartesian grid without PL weighting
+                for tran in range(tranA, tranO):
+                    SIJ_ARRAY[:, tran]                =  WRK[:, tran-tranA]
+            else:
+                if (OCTREE==0):            # Cartesian grid with PL weighting
+                    for tran in range(tranA, tranO):
+                        SIJ_ARRAY[:, tran]            =  WRK[:, tran-tranA]  * APL/PL[:]
+                elif (OCTREE in [1,2]):    #  OCTREE=1,2, weight with  (APL/PL) * f(level)
+                    a, b                              =  0, LCELLS[0]
+                    for tran in range(tranA, tranO):
+                        SIJ_ARRAY[a:b, tran]          =  WRK[a:b, tran-tranA] * APL/PL[a:b]
+                    for l in range(1, OTL):
+                        a, b                          =  OFF[l], OFF[l]+LCELLS[l]                    
+                        if (OCTREE==1):            k  =  8.0**l    # OCTREE1   PL should be  APL/8^l
+                        else:                      k  =  2.0**l    # OCTREE2   PL should be  APL/2^l
+                        for tran in range(tranA, tranO):
+                            SIJ_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA] * (APL/k) / PL[a:b]
+                else:  # OCTREE 3,4,5,40   weight 2**-l  --- except OCTREE=3 is not exact
+                    if (PLWEIGHT):  # include APL/PL weighting
+                        # print("*** PLWEIGHT***")
+                        a, b                          =  0, LCELLS[0]
+                        for tran in range(tranA, tranO):
+                            SIJ_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA] * APL/PL[a:b]
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]                    
+                            for tran in range(tranA, tranO):
+                                SIJ_ARRAY[a:b, tran]  =  WRK[a:b, tran-tranA] * (APL/2.0**l) /  PL[a:b]
+                    else:  # if we rely on PL being correct  - only volume weighting
+                        a, b                          =  0, LCELLS[0]
+                        for tran in range(tranA, tranO):
+                            SIJ_ARRAY[a:b, tran]      =  WRK[a:b, tran-tranA]
+                        m = nonzero(RHO[a:b]>0.0)
+                        yyy  =  APL/PL[a:b]
+                        print("*** L=0, OMIT  APL/PL = %.4f +- %.4f" % (mean(yyy[m]), std(yyy[m])))
+                        for l in range(1, OTL):
+                            a, b                      =  OFF[l], OFF[l]+LCELLS[l]      
+                            m  =  nonzero(RHO[a:b]>0.0)
+                            yyy  =  APL / (2.0**l) / PL[a:b]
+                            print("*** L=%d, OMIT  APL/PL = %.4f +- %.4f" % (l, mean(yyy[m]), std(yyy[m])))
+                            for tran in range(tranA, tranO):
+                                SIJ_ARRAY[a:b, tran]  =  WRK[a:b, tran-tranA] ### / (2.0**l)
+
+            
+        m = nonzero(RHO>0.0)
+        if (WITH_ALI>0):
+            if (INI['verbose']>1):
+                print("      TRANSITION %2d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
+                (tran, mean(SIJ_ARRAY[m[0],tran]), mean(ESC_ARRAY[m[0],tran]), time.time()-t_tran))
+
+            if (0): sys.exit()
+            
+            
+        if (COOLING==2):
+            cl.enqueue_copy(queue, LEV_COOL, COOL_buf)
+            SUM_COOL[:]   +=   LEV_COOL[:] * hf[tran]    # per cm3
+
+
+    #  ---- end of loop over transition batches ----
+
+    if (INI['verbose']<2):
+        sys.stdout.write('\n')
+
             
     # <--- for tran ---
     
     
     if (COOLING==2):
+        assert(1==0)
         print("BRUTE COOLING: %10.3e" % (sum(SUM_COOL)/CELLS))
         fpb = open('brute.cooling', 'wb')
         asarray(SUM_COOL, float32).tofile(fpb)
@@ -1577,7 +2069,7 @@ def SimulateOL():
     OL_NI_buf    =  cl.Buffer(context, mf.READ_ONLY, 4 * 2*MAXCMP*CELLS)  #   OL_NI[2, NCMP,CELLS] = { nu, nbnb }
     OL_RES_buf   =  cl.Buffer(context, mf.READ_WRITE, 4 * 2*MAXCMP*CELLS) #  OL_RES[2, NCMP,CELLS] = { sij, esc }
 
-    print("GLOBAL %d, MAXCHN %d" % (GLOBAL, MAXCHN))
+    # print("GLOBAL %d, MAXCHN %d" % (GLOBAL, MAXCHN))
     OL_NTRUE_buf =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #  NTRUE[GLOBAL, MAXCHN]
     OL_TAU_buf   =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #    TAU[GLOBAL, MAXCHN]
     OL_EMIT_buf  =  cl.Buffer(context, mf.READ_WRITE, 4 * GLOBAL*MAXCHN)  #   EMIT[GLOBAL, MAXCHN]
@@ -1592,7 +2084,7 @@ def SimulateOL():
         TRAN          =  OLBAND.TRAN[iband]  # transitions in this band
         COFF          =  OLBAND.COFF[iband]  # offsets in channels for each transition
 
-        print("SimulateOL  band = %d  -- " % iband, "   TRAN = ", TRAN)
+        # print("\n**** SimulateOL  band = %d  -- " % iband, "   TRAN = ", TRAN)
         assert(len(COFF)<=MAXCMP)
         Aul           =  zeros(NCMP, float32)
         Ab            =  zeros(NCMP, float32)
@@ -1605,7 +2097,8 @@ def SimulateOL():
             Aul[icmp]     =  MOL.A[tran]
             Ab[ icmp]     =  MOL.BB[tran]
             GG[ icmp]     =  MOL.GG[tran]
-            # print("icmp=%d    Aul=%10.3e  Ab=%10.3e  GG=%10.3e  COFF=%d" % (icmp, Aul[icmp], Ab[icmp], GG[icmp], COFF[icmp])) ;
+            # print("icmp=%d    Aul=%10.3e  Ab=%10.3e  GG=%10.3e  COFF=%d" %
+            # (icmp, Aul[icmp], Ab[icmp], GG[icmp], COFF[icmp])) ;
             
         cl.enqueue_copy(queue, Aul_buf,    Aul)
         cl.enqueue_copy(queue, Ab_buf,     Ab)
@@ -1616,6 +2109,13 @@ def SimulateOL():
         
         BGPHOT    =  Planck(freq, Tbg)* 1.74080   /  (PLANCK*C_LIGHT) * (1.0e5*WIDTH)*VOLUME/GL
         GN        = (C_LIGHT/(1.0e5*WIDTH*freq)) * GL  # GRID_LENGTH multiplied to gauss norm
+
+        if (ONESHOT==0):
+            # 2025-07-08  => now ONESHOT=0 gives same results as ONESHOT=1,
+            # but probably only if offs==1
+            assert(INI['offsets']==1)
+            BGPHOT *= 4.0
+        
         if (INI['verbose']<2):
              sys.stdout.write(' %2d' % tran)
              sys.stdout.flush()
@@ -1751,7 +2251,7 @@ def SimulateOL():
                     sys.exit()
             if (PLWEIGHT==0):    # assume PLWEIGHT implies OCTREE==0
                 #  Cartesian grid -- no PL weighting, no cell-volume weighting
-                assert(1==0)
+                # assert(1==0)
                 for icmp in range(NCMP):
                     tran = TRAN[icmp]
                     SIJ_ARRAY[:, tran]          =  OL_WRK[0,icmp,:]  
@@ -1760,7 +2260,7 @@ def SimulateOL():
                 if (OCTREE==0):   # regular Cartesian but PLWEIGHT=1 ==> use PL weighting
                     for icmp in range(NCMP):
                         tran = TRAN[icmp]
-                        print("icmp %d, tran %d" % (icmp, tran))
+                        # print("icmp %d, tran %d" % (icmp, tran))
                         SIJ_ARRAY[:, tran]            =  OL_WRK[0,icmp,:] #* APL/PL[:]
                         ESC_ARRAY[:, tran]            =  OL_WRK[1,icmp,:] #* APL/PL[:]
                 elif (OCTREE in [1,2]):   #  OCTREE=1,2, weight with  (APL/PL) * f(level)
@@ -1819,11 +2319,12 @@ def SimulateOL():
                 sys.exit()
                                 
         else:  # no ALI, SIJ only
-            assert(0==1)
+            assert(0==1)  # it seems that this option does not exist... must use ALI
+            # pass
                                                                             
-        m = nonzero(RHO>0.0)
         if (WITH_ALI>0):
             if (INI['verbose']>1):
+                m = nonzero(RHO>0.0)
                 print("      TRANSITION %2d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
                 (tran, mean(SIJ_ARRAY[m[0],tran]), mean(ESC_ARRAY[m[0],tran]), time.time()-t_tran))
             
@@ -2028,9 +2529,10 @@ def SolveCL():
     global NI_buf, CELLS, queue, kernel_solve, RES_buf, VOLUME, CELLS, LEVELS, TRANSITIONS, MOL
     global RHO, TKIN, ABU
     global MOL_A_buf, MOL_UL_buf, MOL_E_buf, MOL_G_buf
-    global MOL_TKIN_buf, MOL_CUL_buf, MOL_C_buf ## , MOL_CABU_buf   
+    global MOL_TKIN_buf, MOL_CUL_buf, MOL_C_buf
     global SOL_WRK_buf, SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf, SOL_NI_buf, SOL_CABU_buf
     global SOL_SIJ_buf, SOL_ESC_buf, OCTREE, BATCH
+    # print("SolveCL")
     # TKIN
     for i in range(1, PARTNERS):
         if (len(MOL.TKIN[i])!=NTKIN):
@@ -2038,6 +2540,7 @@ def SolveCL():
         
     CHECK = min([INI['uppermost']+1, LEVELS])  # check this many lowest energylevels
     GLOBAL_SOLVE = IRound(BATCH, LOCAL)
+    # print("GLOBAL_SOLVE %d, BATCH %d, LOCAL %d" % (GLOBAL_SOLVE, BATCH, LOCAL))
     tmp   = zeros((BATCH, 2, TRANSITIONS), float32)
     res   = zeros((BATCH, LEVELS), float32)
     ave_max_change     = 0.0
@@ -2106,7 +2609,7 @@ def SolveCL():
                 # solve
                 kernel_solve(queue, [GLOBAL_SOLVE,], [LOCAL,], ilevel, batch, 
                 MOL_A_buf, MOL_UL_buf,  MOL_E_buf, MOL_G_buf, PARTNERS, NTKIN, NCUL,   
-                MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, SOL_CABU_buf, # MOL_CABU_buf,
+                MOL_TKIN_buf, MOL_CUL_buf,  MOL_C_buf, SOL_CABU_buf,
                 SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf,  SOL_NI_buf, SOL_SIJ_buf, SOL_ESC_buf,  
                 RES_buf, SOL_WRK_buf, debug_i)   # was follow_ind, should be debug_i ???
                 cl.enqueue_copy(queue, res, RES_buf)
@@ -2157,12 +2660,12 @@ def SolveCL():
         #sys.exit()
             
             
-    else:
+    else:  # not OCTREE
         
         for ibatch in range(CELLS//BATCH+1):
-            a     = ibatch*BATCH
-            b     = min([a+BATCH, CELLS])
-            batch = b-a
+            a     =  ibatch*BATCH
+            b     =  min([a+BATCH, CELLS])
+            batch =  b-a
             if (batch<1): break  #   division CELLS//BATCH went even...
             #print(" SolveCL, batch %5d,  [%7d, %7d[,  %4d cells, BATCH %4d" % (ibatch, a, b, batch, BATCH))
             # copy RHO, TKIN, ABU
@@ -2375,7 +2878,7 @@ def WriteSpectra(INI, u, l):
         
         fptau = None
         if (INI['FITS']==0):
-            fp          =  open('%s_%s_%02d-%02d%s.spe' % (INI['prefix'], MOL.NAME, u, l, ['', '.%03d' % iview][NVIEW>1]), 'wb')
+            fp    =  open('%s_%s_%02d-%02d%s.spe' % (INI['prefix'], MOL.NAME, u, l, ['', '.%03d' % iview][NVIEW>1]), 'wb')
             asarray([NRA, NDE, nchn], int32).tofile(fp)
             asarray([-0.5*(nchn-1.0)*WIDTH, WIDTH], float32).tofile(fp)
             if (TAUSAVE>0):            
@@ -3128,10 +3631,20 @@ max_change, Tsin, Tsol, Tsav = 0.0, 0.0, 0.0, 0.0
 print("================================================================================")
 for ITER in range(INI['iterations']):
     print('   ITERATION %d/%d' % (1+ITER, INI['iterations']))
-    t0    =  time.time()
-    Simulate()        # normal transitions and HFS bands
-    if (WITH_OVERLAP):
-        SimulateOL()  # general line overlap
+    t0    =  time.time()    
+    if (INI['multitran']>0):
+        SimulateMultitran(INI['multitran'])      # multiple transitions per kernel call
+    else:
+        if (WITH_OVERLAP):
+            SimulateOL()         # general line overlap
+        Simulate()               # calculations one transition at a time, all HFS cases, single components
+    if (0):
+        print("================================================================================")
+        for tran in range(TRANSITIONS):
+            print("  tran = %02d    SIJ = %10.3e   ESC = %10.3e" % (tran, mean(SIJ_ARRAY[:,tran]), mean(ESC_ARRAY[:,tran])))
+        print("  ")
+        print("================================================================================")
+        ## sys.exit()
     Tsim  =  time.time()-t0
     t0    =  time.time()
     if (INI['clsolve']):
