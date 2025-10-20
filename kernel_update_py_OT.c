@@ -8511,13 +8511,6 @@ __kernel void UpdateOT4(  // @u
    float flo ;
    
    
-# if 0
-   printf("GID %9d\n", gid) ;
-   if (gid0!=21) return ;
-# endif
-   
-   
-   
 # if (WITH_CRT>0)
    float Ctau, Cemit, Ltau, Ttau, tt, ttt, Lleave, Dleave, pro, sij ;
 # endif  

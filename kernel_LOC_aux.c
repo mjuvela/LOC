@@ -876,7 +876,11 @@ void __kernel SolveCL(
          for(u=0; u<NCUL; u++) {  // find the row  u  in collisional coefficient table  (i,j)
             if ((CUL[2*u]==i)&(CUL[2*u+1]==j)) break ;  // <-- CUL OF THE FIRST PARTNER ONLY !!!
          }
-         if (u>=NCUL) continue ; // at least some test cases have with missing collisional rates !!!!
+         if (u>=NCUL) { // at least some test cases have some missing collisional rates !!!!
+            MATRIX[IDX(j,i)] = 0.0f ;
+            MATRIX[IDX(i,j)] = 0.0f ;
+            continue ; 
+         }
          tmp = 0.0f ;
          for(int p=0; p<PARTNERS; p++) { // get_C has the correct row from C, NTKIN element vector DOWNWARDS !!
             tmp += CABU[id*PARTNERS+p]*get_C(TKIN[id], NTKIN, &MOL_TKIN[p*NTKIN], &C[p*NCUL*NTKIN + u*NTKIN]) ;
@@ -924,7 +928,7 @@ void __kernel SolveCL(
       // if nu==0.0, we should have  beta=1  ==>  element == A[t] ??
       // if (tmp>1.0e-30f)  MATRIX[IDX(l,u)]  +=  ESC[id*TRANSITIONS+t]/(volume*tmp) ;
       // else               MATRIX[IDX(l,u)]  +=  A[t]  ;
-      MATRIX[IDX(l,u)] += (tmp>1.0e-20f) ? (ESC[id*TRANSITIONS+t]/(volume*tmp)) : (A[t]) ;
+      MATRIX[IDX(l,u)] += (tmp>1.0e-24f) ? (ESC[id*TRANSITIONS+t]/(volume*tmp)) : (A[t]) ;  // $$$ was 1.0e-20f
 # endif
    }
 #else // not ALI
@@ -970,8 +974,8 @@ void __kernel SolveCL(
    
    
 #if 0
-   printf("\n") ;
    if (id==100) {
+      printf("\n") ;
       for(int j=0; j<LEVELS; j++) {      // row
          for(int i=0; i<LEVELS; i++) {   // column
             printf(" %10.3e", MATRIX[IDX(j,i)]) ;
@@ -990,30 +994,18 @@ void __kernel SolveCL(
    }
    for(int i=0; i<LEVELS; i++)  B[i]  =  V[i]*RHO[id]*ABU[id] / tmp ;  // B ro, X rw
 #if 0
+   if (id==100) {
+      printf("--------------  RHO %12.4e  ABU %12.4e  tmp %12.4e\n", RHO[id], ABU[id], tmp) ;
+      printf("                %12.4e %12.4e %12.4e %12.4e %12.4e\n", V[0], V[1], V[2], V[3], V[4]) ;
+   }
+#endif
+#if 0
    if (id==follow_i) {
       printf("NI> ") ;
       for(int t=0; t<LEVELS; t++) printf(" %10.3e", B[t]) ;
       printf("\n") ;
    }
 #endif
-   
-#if 0
-   if (id==9310) {
-      printf("CELL 100:\n") ;
-      for(int j=0; j<LEVELS; j++) {      // row
-         for(int i=0; i<LEVELS; i++) {   // column
-            printf(" %10.3e", MATRIX[IDX(j,i)]) ;
-         }
-         printf("\n") ;
-      }
-      printf("\nright side  0,0, ..., %.4e, RHO=%.3e, ABU=%.3e\n", VECTOR[LEVELS-1], RHO[id], ABU[id]) ;
-      for(int i=0; i<LEVELS; i++) printf("%12.4e ", B[i]) ;
-      printf("\n") ;
-   }
-#endif
-   
-   
-   
    
 }
 

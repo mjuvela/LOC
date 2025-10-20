@@ -282,8 +282,11 @@ class MoleculeO:
     def Transitions(self, levels):
         """
         Update self.TRANSITION array so that it contains only transitions between levels < levels.
+        Assumes that levels are in increasing order of energy.
         """
         print("Transitions(%d) from TRANSITIONS=%d" % (levels, self.TRANSITIONS))
+        if (levels>=self.LEVELS): # nothing to do...
+            return self.TRANSITIONS
         # print(self.TRANSITION)
         ok  =  np.zeros(self.TRANSITIONS, np.int32)
         for i in range(self.TRANSITIONS):  # loop over original array
@@ -304,10 +307,10 @@ class MoleculeO:
             self.GG[t]    =  self.G[u]/self.G[l]
             # print("    %2d -> %2d   F= %12.4e   A= %12.4e" % (u, l, self.F[t], self.A[t]))
         # Drop also higher levels... that would otherwise be included in partition function
-        if (levels<len(self.G)):
+        if (levels<len(self.G)): # assumes levels in energy order
             self.G        =  asarray(self.G[0:levels], np.float32)*1.0
             self.E        =  asarray(self.E[0:levels], np.float32)*1.0
-        self.LEVELS = levels        
+        self.LEVELS  = levels        
         if (1): # dump the remaining data
             fp = open('%s.dump' % self.NAME, 'w')
             fp.write('%s\n' % self.NAME)
@@ -1170,7 +1173,11 @@ def GetHealpixDirection(nside, ioff, idir, X, Y, Z, offs=1,  DOUBLE_POS=False, t
         tmp[imax] *= 1.00001
         tmp       /=  sqrt(sum(tmp**2.0))
         DIR['x'], DIR['y'], DIR['z'] =  tmp
-        LEADING    =  2*imax + [0,1][tmp[imax]<0.0]
+        # LEADING    =  2*imax + [0,1][tmp[imax]<0.0]
+        if (tmp[imax]<0.0):
+            LEADING    =  2*imax + 1
+        else:
+            LEADING    =  2*imax
     else:
         if (abs(DIR['x'])>abs(DIR['y'])):
             if (abs(DIR['x'])>abs(DIR['z'])):

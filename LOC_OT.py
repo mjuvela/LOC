@@ -14,6 +14,11 @@ sys.path.append(INSTALL_DIR)
 from   LOC_aux import *
 t000 = time.time()
 
+if (1):
+    KILL_MASERS = -1.0e-27   # allow mild masering
+else:
+    KILL_MASERS =  1.0e-29    # no masers allowed
+
 
 if (0):
     nside = 12
@@ -184,7 +189,7 @@ if (WITH_OVERLAP):
             SINGLE[OLBAND.GetTransition(iband, icmp)] = 0  # transition part of a wider band (overlap)
         MAXCHN = max([MAXCHN, OLBAND.Channels(iband)])     # Channels() == extra channels!
         MAXCMP = max([MAXCMP, OLBAND.NCMP[iband]])
-        if (INI['verbose']>1): 
+        if (INI['verbose']>2): 
             print("OVERLAP => CHANNELS %d, MAXCHN %d, MAXCMP %d" % (CHANNELS, MAXCHN, MAXCMP))
             for i in range(TRANSITIONS):
                 print("  SINGLE[%d] = %d" % (i, SINGLE[i]))
@@ -1120,11 +1125,8 @@ def Simulate():
         # Upload NI[upper] and NB_NB[tran] values
         tmp  =  tmp_1 * Aul * (NI_ARRAY[:,lower]*gg-NI_ARRAY[:,upper]) / (freq*freq)  # [CELLS]
 
-        if (0):
-            tmp  = np.clip(tmp, -1.0e-12, 1.0e32)      # kernel still may have clamp on tau
-            tmp[nonzero(abs(tmp)<1.0e-32)] = 1.0e-32   # nb_nb -> one must not divide by zero  $$$
-        else:
-            tmp = np.clip(tmp, 1.0e-25, 1.0e32)        # KILL ALL MASERS  $$$
+        tmp  = np.clip(tmp, KILL_MASERS, 1.0e32)      # kernel still may have clamp on tau
+        tmp[nonzero(abs(tmp)<1.0e-32)] = 1.0e-32   # nb_nb -> one must not divide by zero  $$$
             
         WRK[:,0]  = NI_ARRAY[:, upper]   # ni          WRK[CELLS,2]
         WRK[:,1]  = tmp                  # nb_nb
@@ -1422,8 +1424,8 @@ def Simulate():
                         
         m = nonzero(RHO>0.0)
         if (WITH_ALI>0):
-            if (INI['verbose']>1):
-                print("      TRANSITION %2d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
+            if (INI['verbose']>2):
+                print("      TRANSITION %3d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
                 (tran, mean(SIJ_ARRAY[m[0],tran]), mean(ESC_ARRAY[m[0],tran]), time.time()-t_tran))
 
             if (0): sys.exit()
@@ -1450,11 +1452,15 @@ def Simulate():
             print("CELLS %d" % len(m[0]))
             print("SIJ_ARRAY[%d] " % tran,  percentile(SIJ_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
             plot(SIJ_ARRAY[m[0],tran], 'r.')
-            text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]), std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])), transform=ax.transAxes, color='m', size=15)
+            text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]),
+                                                                   std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])),
+                 transform=ax.transAxes, color='m', size=15)
             if (WITH_ALI>0):
                 print("ESC_ARRAY[%d] " % tran,  percentile(ESC_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
                 plot(ESC_ARRAY[m[0],tran], 'b.')
-                text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(ESC_ARRAY[m[0],tran]), std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])), transform=ax.transAxes, color='c', size=15)
+                text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(ESC_ARRAY[m[0],tran]),
+                                                                       std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])),
+                     transform=ax.transAxes, color='c', size=15)
             title("SIJ and ESC directly from kernel")
             # show(block=True)
             sys.exit()
@@ -1644,11 +1650,8 @@ def SimulateMultitran(ntran=2):
             j             =  tran-tranA
             print("  tran = %d  .... %02d -> %02d   BG %10.3e" % (tran, upper, lower, BGPHOT[j]))
             tmp           =  tmp_1 * Aul[j] * (NI_ARRAY[:,lower]*MOL.GG[tran]-NI_ARRAY[:,upper]) / (freq[j]*freq[j])
-            if (0):
-                tmp  = np.clip(tmp, -1.0e-12, 1.0e32)      # kernel still may have clamp on tau
-                tmp[nonzero(abs(tmp)<1.0e-32)] = 1.0e-32   # nb_nb -> one must not divide by zero  $$$
-            else:
-                tmp = np.clip(tmp, 1.0e-25, 1.0e32)        # KILL ALL MASERS  $$$            
+            tmp  = np.clip(tmp, KILL_MASERS, 1.0e32)      # kernel still may have clamp on tau
+            tmp[nonzero(abs(tmp)<1.0e-32)] = 1.0e-32   # nb_nb -> one must not divide by zero  $$$
             WRK[:, j]     =  tmp                           # WRK[CELLS, ntran]
         cl.enqueue_copy(queue, NBNB_buf, WRK)              # NB_NB_buf[CELLS, ntran]
 
@@ -1990,7 +1993,7 @@ def SimulateMultitran(ntran=2):
         m = nonzero(RHO>0.0)
         if (WITH_ALI>0):
             if (INI['verbose']>1):
-                print("      TRANSITION %2d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
+                print("      TRANSITION %3d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
                 (tran, mean(SIJ_ARRAY[m[0],tran]), mean(ESC_ARRAY[m[0],tran]), time.time()-t_tran))
 
             if (0): sys.exit()
@@ -2131,7 +2134,8 @@ def SimulateOL():
             upper, lower  =  MOL.T2L(tran)
             freq          =  MOL.F[tran]
             tmp           =  tmp_1 * Aul[icmp] * (NI_ARRAY[:,lower]*GG[icmp]-NI_ARRAY[:,upper]) / (freq*freq)  # [CELLS]
-            tmp           =  np.clip(tmp, 1.0e-25, 1.0e32)        # KILL ALL MASERS  $$$
+            tmp           =  np.clip(tmp, KILL_MASERS, 1.0e32)        # KILL ALL MASERS  $$$
+            tmp[nonzero(abs(tmp)<1.0e-32)] = 1.0e-32   # nb_nb -> one must not divide by zero  $$$
             OL_WRK[0,icmp,:] =  NI_ARRAY[:, upper]   # ni
             OL_WRK[1,icmp,:] =  tmp                  # nb_nb
         cl.enqueue_copy(queue, OL_NI_buf, OL_WRK)    # OL_NI_buf [2, NCMP, CELLS]
@@ -2309,11 +2313,15 @@ def SimulateOL():
                 print("CELLS %d" % len(m[0]))
                 print("SIJ_ARRAY[%d] " % tran,  percentile(SIJ_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
                 plot(SIJ_ARRAY[m[0],tran], 'r.')
-                text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]), std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])), transform=ax.transAxes, color='m', size=15)
+                text(0.2, 0.5, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(SIJ_ARRAY[m[0],tran]),
+                                                                       std(SIJ_ARRAY[m[0],tran])/mean(SIJ_ARRAY[m[0],tran])),
+                     transform=ax.transAxes, color='m', size=15)
                 if (WITH_ALI>0):
                     print("ESC_ARRAY[%d] " % tran,  percentile(ESC_ARRAY[m[0],tran], (1.0, 50.0, 99.0)))
                     plot(ESC_ARRAY[m[0],tran], 'b.')
-                    text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' % (mean(ESC_ARRAY[m[0],tran]), std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])), transform=ax.transAxes, color='c', size=15)
+                    text(0.2, 0.4, r'$%.4e, \/ \/ \/ \sigma(r) = %.6f$' %(mean(ESC_ARRAY[m[0],tran]),
+                                                                        std(ESC_ARRAY[m[0],tran])/mean(ESC_ARRAY[m[0],tran])),
+                        transform=ax.transAxes, color='c', size=15)
                 title("SIJ and ESC directly from kernel")
                 # show(block=True)
                 sys.exit()
@@ -2325,7 +2333,7 @@ def SimulateOL():
         if (WITH_ALI>0):
             if (INI['verbose']>1):
                 m = nonzero(RHO>0.0)
-                print("      TRANSITION %2d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
+                print("      TRANSITION %3d  <SIJ> %12.5e   <ESC> %12.5e  T/TRAN  %6.1f" %
                 (tran, mean(SIJ_ARRAY[m[0],tran]), mean(ESC_ARRAY[m[0],tran]), time.time()-t_tran))
             
         if (0):
@@ -2362,7 +2370,7 @@ def SimulateOL():
     
 
 def Solve(CELLS, MOL, INI, LEVELS, TKIN, RHO, ABU, ESC_ARRAY):
-    NI_LIMIT  =  1.0e-28
+    NI_LIMIT  =  1.0e-29
     CHECK     =  min([INI['uppermost']+1, LEVELS])  # check this many lowest energylevels
     cab       =  ones(10, float32)                  # scalar abundances of different collision partners
     for i in range(PARTNERS):
@@ -2865,11 +2873,8 @@ def WriteSpectra(INI, u, l):
             
         wrk         =  (tmp_1 * Aul * (NI_ARRAY[:,l]*gg-NI_ARRAY[:,u])) / (freq*freq)
         # wrk was clipped to 1e-25 ... and this produced spikes in spectra ??... not the reason....
-        if (0):
-            wrk     =  np.clip(wrk, -1.0e-12, 1.0e10)    
-            wrk[nonzero(abs(wrk)<1.0e-30)] = 1.0e-30
-        else:
-            wrk     =  clip(wrk, 1.0e-25, 1e10)          #  KILL ALL MASERS  $$$
+        wrk     =  clip(wrk, KILL_MASERS, 1e32)          #  KILL ALL MASERS  $$$
+        wrk[nonzero(abs(wrk)<1.0e-32)] = 1.0e-32
             
         WRK[:,0]    =  NI_ARRAY[:, u]    # ni
         WRK[:,1]    =  wrk               # nb_nb
@@ -3053,7 +3058,7 @@ def WriteSpectraOL(INI, OLBAND, iband):
         gg      =  MOL.G[u]/MOL.G[l]   
         WRK[0, icmp, :] = NI_ARRAY[:,u]   #  NI[NCMP, CELLS]
         wrk     =  (tmp_1 * Aul * (NI_ARRAY[:,l]*gg-NI_ARRAY[:,u])) / (freq*freq)
-        wrk     =  clip(wrk, 1.0e-25, 1e10)          #  KILL ALL MASERS  $$$
+        wrk[nonzero(abs(wrk)<1.0e-32)] = 1.0e-32
         WRK[1, icmp, :] = wrk             # NBNB[NCMP, CELLS]
         ##
         emit0[icmp]  =  (PLANCK/(4.0*pi))*freq*Aul*int2temp
@@ -3166,10 +3171,10 @@ def WriteSpectraOL(INI, OLBAND, iband):
         if (fwhm>0.0):
             fp[0].data = ConvolveCube(fp[0].data, fwhm, INI['GPU'], INI['platforms'])
             fp[0].header['BEAM'] = fwhm*INI['grid']/3600.0            
-        fp.writeto('OL_%s_%s_%02d-%02d%s.fits'        % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
+        fp.writeto('%s_%s_%02d-%02d%s_OL.fits'        % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
         if (TAUSAVE):
             #  TAU not convolved !
-            fptau.writeto('%s_%s_%02d-%02d_tau%s.fits' % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
+            fptau.writeto('%s_%s_%02d-%02d_tau%s_OL.fits' % (INI['prefix'], MOL.NAME, u0, l0, ['', '.%03d' % iview][NVIEW>1]), overwrite=True)
             del fptau
         print("  SPECTRUM %3d  = %2d -> %2d,  <tau_peak> = %.3e" % (tran0, u0, l0, ave_tau/(NRA*NDE)))
 
@@ -3349,11 +3354,8 @@ def WriteLOSSpectrum(INI, u, l):
                 print("SpectraHF has not been defined for OCTREE=%d" % OCTREE), sys.exit()
             
         wrk         =  (tmp_1 * Aul * (NI_ARRAY[:,l]*gg-NI_ARRAY[:,u])) / (freq*freq)
-        if (0):
-            wrk     =  np.clip(wrk, -1.0e-12, 1.0e10)    
-            wrk[nonzero(abs(wrk)<1.0e-30)] = 1.0e-30
-        else:
-            wrk     =  clip(wrk, 1.0e-25, 1e10)          #  KILL ALL MASERS  $$$
+        wrk         =  clip(wrk, KILL_MASERS, 1e32)          #  KILL ALL MASERS  $$$
+        wrk[nonzero(abs(wrk)<1.0e-32)] = 1.0e-32
             
         WRK[:,0]    =  NI_ARRAY[:, u]    # ni
         WRK[:,1]    =  wrk               # nb_nb

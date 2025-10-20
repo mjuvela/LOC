@@ -161,7 +161,9 @@ SpectraOL(  // both Cartesian and Octree
          itran   =  TRAN[icmp] ;
          tmp     =  NI[NCMP*CELLS + icmp*CELLS + INDEX] ;    // NBNB[NCMP,CELLS]
          tmp     =  (fabs(tmp)<1.0e-30f) ? (dx*1.0e-30f*GN[icmp]*GL) : clamp((float)(dx*tmp*GN[icmp]*GL), -2.0f, 1.0e10f) ;
+#if 0
          tmp     =  clamp(tmp, 1.0e-30f, 1.0e10f) ;  // $$$  KILL ALL MASERS
+#endif
          shift   =  round(doppler/WIDTH + COFF[icmp]) ;
          int i1  =  max(-shift,      LIM[row].x) ;
          int i2  =  min(NCHN-shift,  LIM[row].y) ;
