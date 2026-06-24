@@ -2015,7 +2015,7 @@ __kernel void UpdateHF4(  // @h
       
       
       
-#  if 1  // adding siderays
+#  if (OTLEVELS>1)  // adding siderays --- skip if we have only Cartesian grid
       
       // It is essential that we are already in a leaf node when siderays are added:
       // once ray has produced siderays at the current location, it will immediately take a 
@@ -6245,7 +6245,11 @@ __kernel void PathsOT40(  // @p
       
       
       
-# if 1
+      // # if 1 // --------------------------------------------------------------------------------
+
+#if (OTLEVELS>1)
+      
+      // THIS IS NEEDED IF WE HAVE ONLY THE ROOT LEVEL
       // RL  = ray level, the level at which the ray was created, root rays are RL=0
       // OTL = cell level, the current discretisation level, root grid is OTL=0
       // =>  Check at each step if there are potential siderays to be added.
@@ -6546,7 +6550,7 @@ __kernel void PathsOT40(  // @p
       // Subrays are added only when we are at leaf level. Also, when subrays are added, 
       // we continue with the original RL ray and immediately make a step forward. Therefore
       // there is no risk that we would add siderays multiple times.
-# endif
+# endif // --------------------------------------------------------------------------------
       
       
       
@@ -6957,7 +6961,8 @@ __kernel void UpdateOT40(  // @u
       
       
       
-# if 1  // adding siderays
+      // # if 1  // adding siderays
+#if OTLEVELS>1
       
       // It is essential that we are already in a leaf node when siderays are added:
       // once ray has produced siderays at the current location, it will immediately take a 

@@ -412,7 +412,7 @@ def ReadIni(filename):
     'verbose'         :  1,
     'doublecool'      :  0, 
     'escape'          :  0,                  # flag 0/1, whether to estimate and save escape probabilities
-    'nside'           : 64,                  # Healpix NSIDE for escape probability directions
+    # 'nside'           : 64,                  # Healpix NSIDE for escape probability directions ??????????????????
     'cores'           : -1,                  # Number of cores to use (default -1 = all)
     'keys'            : [],                  # store all keywords
     'fwhm'            : [],                  # LOC_OT only, beam fwhm [arcsec] in the same order as "spectra" arguments
@@ -547,7 +547,7 @@ def ReadIni(filename):
                 if (s[0].find("GPU")==0):          INI.update({'GPU':         x})
                 if (s[0].find("levels")==0):       INI.update({'levels':      x})
                 if (s[0].find("speray")==0):       INI.update({'nray_spe':    x})
-                if (s[0].find("nside")==0):        INI.update({'nside':       x})
+                ## if (s[0].find("nside")==0):        INI.update({'nside':       x})
                 if (s[0].find("nray")==0):         INI.update({'nray':        x})                
                 if (s[0].find("escape")==0):       INI.update({'escape':      x})                
                 if (s[0].find('offsets')==0):      INI.update({'offsets':     x})
@@ -1318,6 +1318,7 @@ class OLBandO:
     def Init(self, dv):
         self.BANDS = 0
         self.DV    = dv
+        self.NCMP  = []
         
     def Bands(self):
         return self.BANDS

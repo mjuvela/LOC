@@ -90,8 +90,8 @@ else:
     CELLS  =  NX*NY*NZ
     OTL    =  -1
 
-ONESHOT    =  INI['oneshot']    # no loop over ray offsets, kernel lops over all the rays
-NSIDE      =  int(INI['nside'])
+ONESHOT    =  INI['oneshot']                     # no loop over ray offsets, kernel lops over all the rays
+NSIDE      =  int(INI['nside'])                  # NSIDE determines number of ray directions
 NDIR       =  max([6, 12*NSIDE*NSIDE])           # NSIDE=0 => 6 directions, cardinal directions only
 WIDTH      =  INI['bandwidth']/INI['channels']   # channel width [km/s], even for HFS calculations
 AREA       =  2.0*(NX*NY+NY*NZ+NZ*NX) 
@@ -629,14 +629,13 @@ if (WITH_CRT):
     CRT_EMI_buf = cl.Buffer(context, mf.READ_ONLY, 4*CELLS)
                 
 
-    
+BUFFER_buf  = None   
 if (OCTREE>0):
     # Octree-hierarchy-specific buffers
     LCELLS_buf  = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR,  hostbuf=LCELLS)
     OFF_buf     = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR,  hostbuf=OFF)
     PAR_buf     = cl.Buffer(context, mf.READ_WRITE, 4*max([1, (CELLS-NX*NY*NZ)]))  # no space for root cells!
     RHO_buf     = cl.Buffer(context, mf.READ_ONLY | mf.COPY_HOST_PTR,  hostbuf=RHO)
-    BUFFER_buf  = None
     if (OCTREE==2):
         BUFFER_buf  = cl.Buffer(context, mf.READ_WRITE, 4*NWG*(14+CHANNELS)*512)    # 1024 ???
     elif (OCTREE==3):  #  OTL, OTI,  {x, y, z, OTLRAY} [CHANNELS]  = 2+12*4+CHANNELS
@@ -1571,7 +1570,8 @@ def SimulateMultitran(ntran=2):
     global NTRUE_buf, BUFFER_buf
     print("*** SimulateMultitran")
     
-    del    RES_buf, NI_buf, NTRUE_buf, BUFFER_buf
+    del    RES_buf, NI_buf, NTRUE_buf
+    if (BUFFER_buf): del BUFFER_buf
 
     btran      =  ntran     # can change for the last batch, if TRANSITIONS % ntran != 0
     Aul_buf    =  cl.Buffer(context, mf.READ_ONLY, 4*ntran)
@@ -1588,6 +1588,7 @@ def SimulateMultitran(ntran=2):
     else:
         ESC_buf  =  cl.Buffer(context, mf.READ_WRITE,  4)
     ###
+    ### print(NWG, ntran, CHANNELS, MAX_NBUF)
     BUFFER_buf  = cl.Buffer(context, mf.READ_WRITE, 4*NWG*(26+ntran*CHANNELS)*MAX_NBUF)
     
     niter   =  0
@@ -2631,7 +2632,7 @@ def SolveCL():
                     # print("*** DAMPING APPLIED WITH damping=%.3f" % (INI['damping']))
                     res[0:batch,:] =  INI['damping']*NI_ARRAY[a:b,:] + (1.0-INI['damping'])*res[0:batch,:]
                 # delta = for each cell, the maximum level populations change among levels 0:CHECK
-                delta             =  np.max((res[0:batch,0:CHECK] - NI_ARRAY[a:b,0:CHECK]) / (1.0e-22+NI_ARRAY[a:b,0:CHECK]), axis=1)
+                delta             =  np.max(np.abs(res[0:batch,0:CHECK] - NI_ARRAY[a:b,0:CHECK]) / (1.0e-22+NI_ARRAY[a:b,0:CHECK]), axis=1)
                 global_max_change =  max([global_max_change, max(delta)])
                 ave_max_change   +=  sum(delta)
                 NI_ARRAY[a:b,:]   =  res[0:batch,:]
@@ -2695,7 +2696,7 @@ def SolveCL():
             SOL_RHO_buf, SOL_TKIN_buf, SOL_ABU_buf,  SOL_NI_buf, SOL_SIJ_buf, SOL_ESC_buf,  RES_buf, SOL_WRK_buf, -1)
             cl.enqueue_copy(queue, res, RES_buf)
             # delta = for each cell, the maximum level populations change amog levels 0:CHECK
-            delta             =  np.max((res[0:batch,0:CHECK] - NI_ARRAY[a:b,0:CHECK]) / NI_ARRAY[a:b,0:CHECK], axis=1)
+            delta             =  np.max(np.abs(res[0:batch,0:CHECK] - NI_ARRAY[a:b,0:CHECK]) / NI_ARRAY[a:b,0:CHECK], axis=1)
             global_max_change =  max([global_max_change, max(delta)])
             ave_max_change   +=  sum(delta)
             NI_ARRAY[a:b,:]   =  res[0:batch]
@@ -3664,7 +3665,7 @@ for ITER in range(INI['iterations']):
     Tsave = time.time()-t0
     print("       SIMULATION %7.2f    SOLVE %7.2f    SAVE %7.2f" % (Tsim, Tsol, Tsav))
     if (ave_max_change<INI['stop']):  break
-print("================================================================================")
+    print("================================================================================")
 
 
 if ((INI['iterations']>0)&(COOLING)):
