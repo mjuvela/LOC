@@ -287,6 +287,7 @@ def LOC_read_Tex_3D(filename):
     TEX = fromfile(fp, float32).reshape(NZ, NY, NX)
     fp.close()
     return TEX
+```
 
 ---
 
@@ -575,6 +576,8 @@ load           test.save
 save           test.save
 ```
 
+Run from the command line:
+
 ```
 LOC1D.py   test.ini
 ```
@@ -614,4 +617,3 @@ ConvolveSpectra1D.py   test.CO_01-00.spe   20.0
 ```
 
 which writes `test.CO_01-00_convolved.spe`. The model `angle` is taken from the pickled information in the spectrum file, or can be given with the `-angle` option.
-```
