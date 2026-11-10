@@ -5,6 +5,8 @@ LOC is a line radiative transfer program written using  Python and OpenCL.
 For more details, see 
 * http://www.interstellarmedium.org/radiative_transfer/loc/
 
+The "Input files" and "Output files" sections below refer mostly to the 3D / octree version (`LOC_OT.py`); the spherically symmetric 1D version (`LOC1D.py`) is documented in the last section of this file.
+
 ---
 
 ## Input files
@@ -285,4 +287,331 @@ def LOC_read_Tex_3D(filename):
     TEX = fromfile(fp, float32).reshape(NZ, NY, NX)
     fp.close()
     return TEX
+
+---
+
+## LOC1D.py — spherically symmetric 1D models
+
+`LOC1D.py` is the version of LOC for spherically symmetric models. The cloud is described by a set of concentric shells, and the radiation field is sampled along rays that are defined by their impact parameter with respect to the centre. The physical size of the model is the outer radius
+
+```
+GL = angle[arcsec] × ARCSEC_TO_RADIAN × distance[pc] × PARSEC   [cm]
+```
+
+Only radial (spherically symmetric) velocity fields are supported — there are no transverse velocities and no 3D turbulence field.
+
+In practice, the code uses three different ray sets:
+
+- **NRAY rays** (keyword `nray`) with impact parameters distributed according to `alpha` are used during the iterations. Each ray is characterised by its impact parameter, and the path length of each ray in each shell is precalculated. The escaping and incoming angle-averaged intensities (escape probabilities and SIJ integrals) are accumulated ray by ray, the SIJ values being corrected by the `VOLUME/APL` path-length factor (`PATH_CORRECTION`), where `APL` is the total path length of all rays within a shell.
+- **NRAY_SPE equidistant rays** (keyword `speray`, default = `nray`) are used when the spectra are written. The first spectrum corresponds to the central line of sight (impact parameter = 0) and the last one to the impact parameter 0.9999×GL. The set of spectra is thus a position–velocity cut through the centre of the sphere.
+- if escape probabilities are requested (keyword `escape`), a third kernel integrates the photon escape along `12×nside²` Healpix directions.
+
+The kernels used are `kernel_update_1d_py.c` (no HFS), `kernel_update_1d_hfs_py.c` (`hfsfile`) and `kernel_update_1d_ol_py.c` (`overlap`). The level populations are by default solved on the device (the `SolveCL` kernel that is part of the same source file), or in Python with `clsolve 0`.
+
+### Model cloud description (1D)
+
+The 1D cloud file (`cloud` keyword) is a plain binary file, with the following contents:
+
+```
+CELLS                       (int32)  number of shells
+RADIUS[CELLS]               (float32) outer radius of each shell, in increasing order
+{ rho, Tkin, sigma, abu, Vrad }[CELLS]   (5 × float32 per shell)
+```
+
+| Quantity | Unit | Comment |
+|---|---|---|
+| `rho` | cm⁻³ | number density of H / H₂ (as defined by the molecule file) |
+| `Tkin` | K | kinetic temperature |
+| `sigma` | km/s | **non-thermal** Doppler width (the thermal part is added by LOC, see `thermaldv`) |
+| `abu` | — | fractional abundance of the simulated species relative to `rho` |
+| `Vrad` | km/s | radial velocity, positive outwards |
+
+The file size is thus `4 + 4×CELLS + 20×CELLS` bytes. The radii are either normalised (the last element = 1.0, the physical size being set by the `angle` and `distance` keywords) or absolute values in cm (the last element then gives GL). The shell radii are normalised internally by the value of the last element. LOC prints a warning if the cloud file gives a radius (in cm) that differs by more than 1% from the value following from `angle` × `distance`.
+
+The values read from the file are scaled and clipped as follows:
+
+| Quantity | Scaled by | Clipped to |
+|---|---|---|
+| `rho` | `density` (`kdensity`) | [1.0e-5, 1.0e20] cm⁻³ |
+| `Tkin` | `temperature` (`ktemperature`) | [2.0, 2900.0] K |
+| `sigma` | `sigma` (`ksigma`) — only the non-thermal part | — |
+| `abu` | `fraction` / `abundance` (`kabundance`) | [1.0e-20, 2.0] |
+| `Vrad` | `velocity` (`kvelocity`) | — |
+
+If `thermaldv 1` (default), thermal broadening is added in quadrature to the `sigma` value read from the file,
+
+```
+sigma_total = sqrt( sigma_file² + 2.0e-10 × k × Tkin / (amu × μ) )   [km/s]
+```
+
+where μ is the molecular weight given in the molecule file.
+
+**Note:** the innermost shell must be hit by at least one ray, i.e. the smallest impact parameter, approximately `(0.5/NRAY)^(1/(1+alpha))` (in units of GL), has to be smaller than the outer radius of the innermost shell (in units of GL). Otherwise LOC1D.py stops with the message "INNERMOST CELL IS NOT HIT BY ANY RAYS". Either make the innermost shell thick enough, increase `nray`, or place the rays closer to the centre with `alpha` < 0.
+
+### Ini-file keywords for LOC1D.py
+
+The general syntax of the ini-file is the same as described above (keyword, arguments, `#` comments). Some of the keywords in the general table at the beginning of this document are used in a slightly different way, or are not used at all by LOC1D.py.
+
+#### Keywords that must be given
+
+These keywords have no default values in `ReadIni()` — LOC1D.py aborts if one of them is missing.
+
+| Keyword | Type | Description |
+|---|---|---|
+| `cloud` | filename | Name of the 1D model file (format above). |
+| `molecule` | filename | Molecule file in Lamda format. If the file is not found in the current directory, it is searched for in the (hard-wired) molecule directory defined in `LOC_aux.py`. |
+| `levels` | int | Number of energy levels included in the calculation. The number of radiative transitions among these levels is derived automatically. |
+| `channels` | int | Number of velocity channels. With HFS this is redefined to be the largest number of channels needed by any of the transitions (see below). |
+| `bandwidth` | float | Bandwidth in km/s. The channel width is `bandwidth/channels` and remains unchanged also in the HFS case. |
+| `distance` | float | Distance in pc. Always needed, also when the model size is taken from the cloud file (`angle` ≤ 0). |
+| `angle` | float | Apparent **radius** of the model in arcsec. Give a negative value to take the physical radius from the cloud file (radii in cm); the angle is then derived from `distance`. |
+
+#### Keywords specific to 1D models
+
+| Keyword | Type | Default | Description |
+|---|---|---|---|
+| `nray` | int | 64 | Number of rays (impact parameters) used in the calculation of the radiation field. |
+| `speray` | int | = `nray` | Number of spectra (equidistant impact parameters) that are written. May be larger than `nray`; synonym of the internal parameter `nray_spe`. |
+| `alpha` | float | 1.0 | Sampling of the impact parameters: `IP = u^(1/(1+alpha))`, ray weight `DIRWEI = 2/(1+alpha)×IP^(1-alpha)`, where u runs over [0,1]. With alpha = 1 all rays have the same weight. alpha < 0 places more rays towards the centre, alpha > 0 towards the outer parts. Must be > -1. (In the current implementation this keyword affects only the ray sampling — the shell radii are used exactly as they are given in the cloud file.) A value < -10 selects an experimental mode with an equal number of rays per shell (requires `nray` divisible by the number of shells); it is not better than the normal weighting. |
+| `KILL_EMISSION` | int | 999999 | Shells with index ≥ KILL_EMISSION contribute no line (or dust) emission to the output spectra. Shell numbering starts at 0 (innermost shell). |
+| `tausave` | int | 0 | If > 0, the optical depth of every channel of every ray is saved in a second pass to a file with the suffix `.tau`. |
+| `escape` | int | 0 | If > 0, the escape probability and the radial distribution of the emission are calculated and saved to a text file with the suffix `.esc`. |
+| `nside` | int | 1 | Healpix NSIDE parameter for the directions used in the escape probability calculation (12×nside² directions). No other use in 1D models. |
+| `cooling` | [filename] | off | If the keyword is present, the total cooling rate of the simulated species is calculated. Optionally the file name follows the keyword, otherwise the default `brute.cool` is used. Not implemented in combination with HFS. |
+| `doublecool` | int | 0 | Use double precision accumulation in the cooling rate calculation. |
+| `clsolve` | int | 1 | Solve the equilibrium equations on the OpenCL device (default) or in Python (`clsolve 0`). |
+| `constant_tkin` | flag | off | Assume the same Tkin in all shells and precalculate the collisional part of the equilibrium matrix. Only used by the Python solver (`clsolve 0`). |
+| `WITH_ALI` | int | 1 | Use ALI (escape-probability based) radiative coupling coefficients in the on-device solver. With 0, the full Einstein A coefficients are used instead. No effect on the Python solver, which always uses the ALI formulation. |
+| `lowmem` | int | 1 | Keep the per-ray photon number arrays in global instead of local memory (needed with larger channel counts, slightly slower). |
+| `local` (`LOCAL`) | int | 1 (CPU), 32 (GPU) | Override the default local work group size. |
+| `hfsfile` | filename | — | Enables the hyperfine structure calculation assuming LTE between the HFS components. The file format is described below. |
+| `overlap` | filename | — | Alternative to `hfsfile`: individual transitions whose profiles may overlap in frequency are followed separately (not assumed to be in LTE). The file format is described below. |
+| `cabfile` | filename | — | Cell-by-cell abundances of the collisional partners: `CELLS × PARTNERS` float32 values, no header, cell index running slow and partner index fast. Without this keyword the abundances from the molecule file (default 1.0) are used. |
+| `crtdust` | flag | off | Include dust continuum absorption and emission. The file names are fixed in LOC1D.py: `crt.opacity` and `crt.emission` (the `crttau` and `crtemit` keywords are **not** used by LOC1D.py). |
+| `thermaldv` | int | 1 | Add thermal broadening to the `sigma` value read from the cloud file. |
+| `pickle` | flag | on | Append the pickled INI dictionary to the `.spe`, `.tau`, `.colden` and `.tex` files. On by default, and used e.g. by `ConvolveSpectra1D.py` to get the model `angle`. |
+| `load` / `save` | filename | — | Load / save level populations. Note that the number of levels in the save file must be the same as in the current run. |
+| `iterations`, `stop`, `uppermost` | int, float, int | 1, 1e-5, 999 | Same meaning as in the general table. The iterations are stopped early only from the third iteration onwards. |
+| `spectra` / `transitions` (`tex`) | int pairs | — | `spectra` gives the "upper lower" level pairs for which spectra are written, `transitions` (or `tex`) those for which excitation temperatures are written. |
+| `prefix` | string | `prefix` | Prefix of all output files. |
+| `isotropic` | float | 2.72548 | Temperature of the blackbody background radiation. |
+| `gpu`, `platform` | int | 0, all | Device selection. In LOC1D.py only these two are effective: the device is always of the requested type (CPU by default) and the index within the platform is the first available one. The `device`, `sdevice`, `idevice` and `cores` keywords are not used. |
+
+Keywords from the general table that LOC1D.py does **not** use: `points`, `grid`, `direction`, `mapview`, `offsets`, `fits`/`FITS_RA`/`FITS_DE` (there is no FITS output in 1D), `colden`/`coldensave` (column densities are always saved with the spectra, see below), `infallindex`, `losspectrum`, `multitran`, `minmaplevel`, `MAP_INTERPOLATION`, `octree`, `maxbuf`, `plweight`, `ONESHOT`, `WITH_HALF`, `clip`, `damping`, `dnlimit`, `min_sigma`, `max_sigma`, `verbose`, `crttau`, `crtemit`, `fwhm` (spectral convolution is done afterwards with `ConvolveSpectra1D.py`).
+
+### Other input files
+
+#### HFS structure file (`hfsfile`)
+
+When the hyperfine components are assumed to be in LTE, the molecule file should describe only the main energy levels (no individual HFS components). The relative velocities and intensities of the components are listed in the text file given with the `hfsfile` keyword. The format is
+
+```
+# comments start with # in the first character of the line
+# one block per transition:  upper  lower  number_of_components
+# followed by exactly number_of_components lines:
+#          velocity_shift_[km/s]   relative_weight
+1 0 3
+ -6.0   0.50
+  0.0   1.00
+  6.0   0.25
+```
+
+- The velocity shifts are given relative to an arbitrary zero point (only the separation of the components matters), in km/s.
+- The weights are relative, they are normalised internally.
+- The component lines must follow the transition line directly — blank lines and comments are allowed only between the blocks.
+- Transitions that are not listed in the file are given a single component at offset 0.0 with weight 1.0.
+- The number of levels in the molecule file, and hence the numbering of the levels in this file, must be consistent with the `levels` keyword.
+
+The channel width `bandwidth/channels` is kept unchanged, but for every transition the band is widened to cover the full spread of the components:
+
+```
+channels(transition) = (bandwidth + vmax - vmin) / channel_width
+```
+
+The common number of channels is the largest one among all transitions (LOC prints "HFS revised => CHANNELS …"), and the `.spe`/`.tau` files of the individual transitions contain their own, smaller number of channels. The Gaussian profiles are now stored per transition and per shell (`GAU[TRANSITIONS, CELLS, CHANNELS]`), which requires more memory than a normal run. With HFS, cooling rates are not calculated and no `.colden` file is written.
+
+#### Overlapping line file (`overlap`)
+
+Instead of assuming LTE between the HFS components, one can follow the individual transitions and take their frequency overlap into account:
+
+```
+# one block per band of overlapping lines:
+#   number_of_transitions_in_this_band
+# followed by that many lines with  upper  lower  (0-offset level numbering)
+2
+1 0
+2 1
+```
+
+For each band, the spectrum is written to files with names like `prefix.band0.spe`, with a number of channels equal to `channels` plus the frequency spread of the band expressed in channels. Transitions that do not belong to any band are treated as solitary lines and written as usual.
+
+#### Collisional partner abundances (`cabfile`)
+
+Plain binary file of `CELLS × PARTNERS` float32 values (no header), the abundances being relative to the density values used to define the model. If the file cannot be read with this shape, LOC1D.py stops with an error message.
+
+#### Dust continuum files (`crtdust`)
+
+Two binary files, written by CRT, both starting with the number of cells and the number of transitions (two int32 values), followed by `CELLS × TRANSITIONS` float32 values:
+
+- `crt.opacity` — continuum optical depth per pc (converted internally to optical depth per GL),
+- `crt.emission` — continuum emission in photons s⁻¹ Hz⁻¹ per H₂ (converted internally to photons s⁻¹ channel⁻¹ cm³, and multiplied by the density of each shell).
+
+The number of cells and the number of transitions in these files must match those of the current calculation.
+
+### Output files
+
+All binary output files are little-endian, single precision, and — unless `pickle` is switched off — end with the pickled INI dictionary appended after the numerical data. When reading such a file, read exactly the number of values given by the header and ignore the rest of the file.
+
+File names follow the pattern `prefix.MOLECULE_UU-LL.ext`, where `UU-LL` are the (0-offset) upper and lower levels of the transition, e.g. `test.CO_01-00.spe`.
+
+#### Spectra (`.spe`)
+
+Written for each transition listed with the `spectra` keyword:
+
+```
+NSPE        (int32)  number of spectra = number of impact parameters (speray)
+NCHN        (int32)  number of velocity channels (for HFS: this transition's number)
+V0, DV      (float32) first channel velocity and channel width [km/s]
+SPE[NSPE, NCHN]  (float32)  brightness temperature [K] (Rayleigh–Jeans)
+```
+
+The velocity scale is centred on zero: `V0 = -0.5×(NCHN-1)×DV`. The i:th spectrum corresponds to the impact parameter `0.9999×GL×i/(NSPE-1)`, the first one being the line of sight through the centre. The background radiation is included (the spectra are observed intensities, not source functions).
+
+#### Optical depths (`.tau`, keyword `tausave 1`)
+
+The same format as the spectra files, but the values are the cumulative optical depths of each channel of each ray (a second pass over the rays is made after the iterations). In the HFS case, the `.tau` file contains the sum of the HFS component optical depths.
+
+#### Column densities (`.colden`)
+
+Written automatically whenever spectra are written (except in the HFS case):
+
+```
+N           (int32)  number of rays (NSPE)
+OFF[N]      (float32) impact parameters [cm]
+NTOT[N]     (float32) total (H2) column density [cm-2]
+NMOL[N]     (float32) column density of the simulated species [cm-2]
+TAU[N]      (float32) peak optical depth of the spectrum
+```
+
+#### Excitation temperatures (`.tex`, keyword `transitions` / `tex`)
+
+```
+CELLS       (int32)  number of shells
+TEX[CELLS]  (float32) excitation temperature [K] for the transition
+```
+
+Note the single-integer header (the general 3D format has four integers).
+
+#### Escape probabilities (`.esc`, keyword `escape 1`)
+
+A plain text file written for each transition for which spectra are saved:
+
+```
+# radius,  j/volume,  j/impact_parameter, beta=escape_probability
+  0.0000e+00      3.1169e-01    0.0000e+00     5.8055e-02
+  1.1219e+16      2.8731e-01    1.0567e-01     3.5976e-01
+  ...
+```
+
+The columns are the impact parameter (cm), the relative emissivity per unit volume (proportional to the population of the upper level of the transition at that position), the relative emissivity per unit impact parameter, and the escape probability, the latter being the ratio of photons that escape the model to the photons emitted, summed over the frequency channels and over the `12×nside²` directions.
+
+#### Cooling rates (default `brute.cool`, keyword `cooling`)
+
+A plain binary file of `CELLS` float32 values, the total cooling rate of the simulated species in each shell in cgs units (erg s⁻¹ cm⁻³). Not calculated in the HFS case.
+
+#### Level populations (`save` / `load`)
+
+```
+CELLS, LEVELS   (2 × int32)
+NI[CELLS, LEVELS]  (float32)  level population densities [cm-3]
+```
+
+Saved every 11:th iteration and after the last iteration. A file with a different number of levels than the current run cannot be reloaded (the level populations are then reset to LTE).
+
+### Full example of a LOC1D.py run
+
+#### Cloud model
+
+```python
+from numpy import *
+
+CELLS = 100
+R     = linspace(0.15, 1.0, CELLS).astype(float32)   # shell outer radii, normalised
+
+C = zeros((CELLS, 5), float32)
+C[:,0] = 1.0e4*(1.0 - R)**0.5     # density [cm-3]
+C[:,1] = 15.0                     # Tkin [K]
+C[:,2] = 0.2                      # non-thermal Doppler width [km/s]
+C[:,3] = 1.0e-4                   # abundance
+C[:,4] = 1.0                      # radial velocity [km/s]
+
+fp = open('my.cloud1d', 'wb')
+asarray([CELLS], int32).tofile(fp)
+asarray(R, float32).tofile(fp)
+C.tofile(fp)
+fp.close()
+```
+
+#### Ini file and LOC run
+
+```
+molecule       co.dat
+cloud          my.cloud1d
+levels         5
+uppermost      2
+distance       100.0
+angle          30.0
+bandwidth      4.0
+channels       64
+nray           128
+speray         64
+iterations     5
+stop           1.0e-5
+spectra        1 0   2 1
+transitions    1 0
+tausave        1
+prefix         test
+load           test.save
+save           test.save
+```
+
+```
+LOC1D.py   test.ini
+```
+
+This produces files including `test.CO_01-00.spe`, `test.CO_02-01.spe`, `test.CO_01-00.tau`, `test.CO_02-01.tau`, `test.CO_01-00.colden`, `test.CO_01-00.tex`, and `test.save`.
+
+To switch to the hyperfine structure calculation, add the line `hfsfile  co.hfs` to the ini file, `co.hfs` being a file in the format described above.
+
+#### Reading 1D output
+
+```python
+from numpy import *
+
+def LOC_read_spectra_1D(filename):
+    fp = open(filename, 'rb')
+    NSPE, NCHN = fromfile(fp, int32, 2)
+    V0, DV     = fromfile(fp, float32, 2)
+    SPE        = fromfile(fp, float32, NSPE*NCHN).reshape(NSPE, NCHN)
+    fp.close()          # pickled INI at the end of the file is left unread
+    return V0 + arange(NCHN)*DV, SPE, SPE[:, NCHN//2]   # channels, spectra, peak profile
+
+def LOC_read_colden_1D(filename):
+    fp = open(filename, 'rb')
+    N      = fromfile(fp, int32, 1)[0]
+    OFF    = fromfile(fp, float32, N)     # impact parameters [cm]
+    NTOT   = fromfile(fp, float32, N)     # [cm-2]
+    NMOL   = fromfile(fp, float32, N)     # [cm-2]
+    TAU    = fromfile(fp, float32, N)     # peak optical depth
+    fp.close()
+    return OFF, NTOT, NMOL, TAU
+```
+
+The simulated spectra can afterwards be convolved with a Gaussian beam:
+
+```
+ConvolveSpectra1D.py   test.CO_01-00.spe   20.0
+```
+
+which writes `test.CO_01-00_convolved.spe`. The model `angle` is taken from the pickled information in the spectrum file, or can be given with the `-angle` option.
 ```
